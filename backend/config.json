@@ -1,0 +1,92 @@
+{
+  "areas": [
+    {
+      "id": "area-1",
+      "name": "Manila Office",
+      "type": "Homes",
+      "lat": 14.5995,
+      "lng": 120.9842
+    },
+    {
+      "id": "area-2",
+      "name": "Cebu Office",
+      "type": "Schools",
+      "lat": 10.3157,
+      "lng": 123.8854
+    },
+    {
+      "id": "area-1760957275682",
+      "name": "Portal 1",
+      "type": "PisoWiFi Vendo",
+      "lat": 14.5995,
+      "lng": 126.9842
+    },
+    {
+      "id": "area-1760957353801",
+      "name": "Portal 2",
+      "type": "PisoWiFi Vendo",
+      "lat": 16.5995,
+      "lng": 120.9842
+    }
+  ],
+  "links": [
+    {
+      "id": "link-1",
+      "from": "area-1",
+      "to": "area-2"
+    },
+    {
+      "id": "link-1760957312971",
+      "from": "area-1",
+      "to": "area-1760957275682"
+    },
+    {
+      "id": "link-1760957400908",
+      "from": "area-1760957275682",
+      "to": "area-1760957353801"
+    }
+  ],
+  "devices": [
+    {
+      "id": "device-1",
+      "areaId": "area-1",
+      "name": "Router 1",
+      "type": "router",
+      "ip": "8.8.8.8"
+    },
+    {
+      "id": "device-2",
+      "areaId": "area-2",
+      "name": "Router 2",
+      "type": "router",
+      "ip": "1.1.1.1"
+    },
+    {
+      "id": "device-1760940100273",
+      "areaId": "area-2",
+      "name": "Roauter-2a",
+      "type": "wifi-outdoor",
+      "ip": "8.8.4.4"
+    },
+    {
+      "id": "device-1760957238707",
+      "areaId": "area-1760957275682",
+      "name": "Vendo1",
+      "type": "wireless-antenna",
+      "ip": "192.168.1.1"
+    }
+  ],
+  "settings": {
+    "pingInterval": 10,
+    "thresholds": {
+      "latency": {
+        "good": 50,
+        "degraded": 150
+      },
+      "packetLoss": {
+        "good": 1,
+        "degraded": 5
+      }
+    }
+  }
+}
