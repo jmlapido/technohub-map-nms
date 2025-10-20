@@ -43,6 +43,28 @@ map-ping/
 
 ## Installation
 
+### Quick Start from GitHub
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/jmlapido/technohub-map-nms.git
+   cd technohub-map-nms
+   ```
+
+2. **Install all dependencies:**
+   ```bash
+   npm run install:all
+   ```
+
+3. **Start the application:**
+   ```bash
+   npm run dev
+   ```
+
+4. **Access the application:**
+   - Frontend: http://localhost:4000
+   - Backend API: http://localhost:5000/api
+
 ### Windows (Development)
 
 1. **Install all dependencies:**
@@ -63,23 +85,27 @@ map-ping/
 
 **Quick Install (5 minutes):**
 ```bash
-# 1. Install Node.js and PM2
+# 1. Clone the repository
+git clone https://github.com/jmlapido/technohub-map-nms.git
+cd technohub-map-nms
+
+# 2. Install Node.js and PM2
 curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
 sudo apt install -y nodejs
 sudo npm install -g pm2
 
-# 2. Install dependencies
+# 3. Install dependencies
 npm run install:all
 
-# 3. Build frontend
+# 4. Build frontend
 cd frontend && npm run build && cd ..
 
-# 4. Start with PM2
+# 5. Start with PM2
 pm2 start ecosystem.config.js
 pm2 save
 pm2 startup  # Follow instructions
 
-# 5. Configure firewall
+# 6. Configure firewall
 sudo ufw allow 4000/tcp
 sudo ufw enable
 ```
