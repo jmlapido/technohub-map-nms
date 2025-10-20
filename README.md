@@ -250,4 +250,3 @@ sudo ufw allow 5000/tcp  # Backend API
 ## License
 
 MIT
-
