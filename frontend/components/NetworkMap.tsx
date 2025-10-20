@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { type NetworkStatus, type Config, type AreaStatus } from '@/lib/api'
+import { type NetworkStatus, type Config, type AreaStatus, type DeviceStatus } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -301,7 +301,7 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
                     </div>
                     <div className="flex flex-wrap gap-2 lg:gap-3 ml-5">
                       {areas.map(area => {
-                        const onlineCount = area.devices.filter(d => d.status === 'up').length
+                        const onlineCount = area.devices.filter((d: DeviceStatus) => d.status === 'up').length
                         const totalCount = area.devices.length
                         
                         // Determine area status color
@@ -440,8 +440,8 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
                         <Badge 
                           className={`text-xs ${
                             device.status === 'up' ? 'bg-green-600 hover:bg-green-700' :
-                            device.status === 'degraded' ? 'bg-yellow-600 hover:bg-yellow-700' :
-                            'bg-red-600 hover:bg-red-700'
+                            device.status === 'down' ? 'bg-red-600 hover:bg-red-700' :
+                            'bg-yellow-600 hover:bg-yellow-700'
                           }`}
                         >
                           {device.status === 'up' ? 'online' : device.status}

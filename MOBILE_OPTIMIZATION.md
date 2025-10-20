@@ -266,3 +266,4 @@ The application is now **fully mobile-optimized** with:
 
 **Ready for mobile!** 📱🚀
 
+

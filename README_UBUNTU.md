@@ -60,3 +60,4 @@ sudo ufw status     # Check firewall
 
 **TechnoHub Network Monitor** - Real-time network monitoring made simple! 🎉
 
+

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { networkApi, type NetworkStatus, type Config } from '@/lib/api'
+import { networkApi, type NetworkStatus, type Config, type DeviceStatus } from '@/lib/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Activity, Wifi, WifiOff, AlertTriangle, CheckCircle2, XCircle, Home, ShoppingBag, GraduationCap, Router, Radio, Satellite } from 'lucide-react'
@@ -107,7 +107,7 @@ export default function StatusPage() {
     }
     acc[type].push({ ...area, areaInfo })
     return acc
-  }, {} as Record<string, any[]>)
+  }, {} as Record<string, Array<{ areaId: string; status: 'up' | 'down' | 'degraded'; devices: DeviceStatus[]; areaInfo: { id: string; name: string; type: string; lat: number; lng: number } }>>)
 
   return (
     <div className="h-full overflow-auto p-4 lg:p-6">
@@ -232,7 +232,7 @@ export default function StatusPage() {
                   </CardHeader>
                   <CardContent className="p-4 lg:p-6 pt-0">
                     <div className="space-y-2">
-                      {area.devices.map((device, idx) => {
+                      {area.devices.map((device: DeviceStatus, idx: number) => {
                         const deviceInfo = config.devices.find(d => d.id === device.deviceId)
                         return (
                           <div key={idx} className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 p-3 bg-muted rounded-md">
@@ -250,8 +250,8 @@ export default function StatusPage() {
                               <Badge 
                                 className={
                                   device.status === 'up' ? 'bg-green-600 hover:bg-green-700' :
-                                  device.status === 'degraded' ? 'bg-yellow-600 hover:bg-yellow-700' :
-                                  'bg-red-600 hover:bg-red-700'
+                                  device.status === 'down' ? 'bg-red-600 hover:bg-red-700' :
+                                  'bg-yellow-600 hover:bg-yellow-700'
                                 }
                               >
                                 {device.status === 'up' ? 'online' : device.status}

@@ -8,3 +8,4 @@ pm2 stop all
 
 echo "✓ Application stopped!"
 
+
