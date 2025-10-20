@@ -1,11 +1,57 @@
 import axios from 'axios'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'
+// Smart API URL detection that works in all scenarios:
+// 1. Cloudflare Tunnel (same domain)
+// 2. Local IP access
+// 3. Localhost development
+function getApiBaseUrl(): string {
+  // If explicitly set via environment variable, use that
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL
+  }
+
+  // If running in browser, detect from current location
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname } = window.location
+    
+    // If accessing via domain (Cloudflare), use same domain
+    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+      return `${protocol}//${hostname}`
+    }
+    
+    // If accessing via local IP, use the same IP
+    // This will be handled by the browser automatically
+    return 'http://localhost:5000'
+  }
+
+  // Default for server-side rendering
+  return 'http://localhost:5000'
+}
+
+const API_BASE = getApiBaseUrl()
 
 export const api = axios.create({
   baseURL: API_BASE,
   timeout: 10000,
 })
+
+// Add request interceptor for debugging
+api.interceptors.request.use((config) => {
+  console.log(`API Request: ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`)
+  return config
+})
+
+// Add response interceptor for error handling
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    console.error('API Error:', error.message)
+    if (error.code === 'ECONNABORTED') {
+      console.error('Request timeout - backend may not be responding')
+    }
+    return Promise.reject(error)
+  }
+)
 
 export interface Area {
   id: string
