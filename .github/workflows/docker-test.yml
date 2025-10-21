@@ -1,0 +1,55 @@
+name: Docker Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: map-ping:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start container
+        run: |
+          docker run -d --name map-ping-test -p 4000:4000 -p 5000:5000 map-ping:test
+          sleep 10
+
+      - name: Test backend API
+        run: |
+          curl -f http://localhost:5000/api/status || exit 1
+          echo "Backend API is healthy"
+
+      - name: Test frontend
+        run: |
+          curl -f http://localhost:4000 || exit 1
+          echo "Frontend is accessible"
+
+      - name: Check container logs
+        if: failure()
+        run: |
+          docker logs map-ping-test
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop map-ping-test
+          docker rm map-ping-test
+

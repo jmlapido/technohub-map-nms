@@ -43,7 +43,33 @@ map-ping/
 
 ## Installation
 
-### Quick Start from GitHub
+### 🐳 Docker Deployment (Recommended)
+
+The fastest way to get started:
+
+```bash
+# Clone the repository
+git clone https://github.com/jmlapido/technohub-map-nms.git
+cd technohub-map-nms
+
+# Start with Docker Compose
+docker-compose up -d
+
+# Access the application
+# Frontend: http://localhost:4000
+# Backend API: http://localhost:5000/api
+```
+
+**Management:**
+```bash
+docker-compose logs -f      # View logs
+docker-compose restart      # Restart
+docker-compose down         # Stop
+```
+
+📖 **Detailed Docker Guide:** See `DOCKER_README.md`
+
+### Quick Start from GitHub (Manual)
 
 1. **Clone the repository:**
    ```bash
@@ -222,6 +248,28 @@ npm start
 ```
 
 ## Production Deployment
+
+### 🐳 Docker Deployment
+
+Deploy with Docker for easy management and portability:
+
+```bash
+# Build and run
+docker-compose up -d
+
+# Or pull from GitHub Container Registry
+docker pull ghcr.io/jmlapido/technohub-map-nms:latest
+docker run -d -p 4000:4000 -p 5000:5000 ghcr.io/jmlapido/technohub-map-nms:latest
+```
+
+**Benefits:**
+- ✅ Isolated environment
+- ✅ Easy updates with `docker-compose pull && docker-compose up -d`
+- ✅ Persistent data with volumes
+- ✅ Health checks and auto-restart
+- ✅ Works on any platform with Docker
+
+📖 **See:** `DEPLOYMENT.md` for comprehensive deployment options
 
 ### Ubuntu Auto-Start
 

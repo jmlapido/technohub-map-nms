@@ -42,3 +42,6 @@ Thumbs.db
 dist/
 build/
 
+# Docker
+docker-compose.override.yml
+
