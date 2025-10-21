@@ -129,14 +129,14 @@ docker run -d -p 4000:4000 -p 5000:5000 <your-username>/map-ping:latest
 curl -fsSL https://get.docker.com -o get-docker.sh
 sudo sh get-docker.sh
 
-# Install Docker Compose
+# Install Docker Compose V2
 sudo apt-get update
-sudo apt-get install docker-compose-plugin
+sudo apt-get install -y docker-compose-plugin
 
 # Clone and deploy
 git clone <your-repo-url>
 cd map-ping
-docker-compose up -d
+docker compose up -d
 ```
 
 #### Using Nginx Reverse Proxy
@@ -248,7 +248,7 @@ curl http://localhost:5000/api/status
 
 ```bash
 # Docker logs
-docker-compose logs -f
+docker compose logs -f
 
 # Systemd logs
 journalctl -u map-ping -f
@@ -269,8 +269,8 @@ cp backend/config.json backup-config-$(date +%Y%m%d).json
 ```bash
 # Docker update
 git pull
-docker-compose down
-docker-compose up -d --build
+docker compose down
+docker compose up -d --build
 
 # Manual update
 git pull
@@ -290,7 +290,7 @@ pm2 restart map-ping
 
 ### Container won't start
 ```bash
-docker-compose logs map-ping
+docker compose logs map-ping
 ```
 
 ### Port conflicts
@@ -301,6 +301,17 @@ sudo netstat -tuln | grep -E ':(4000|5000)'
 # Change ports in docker-compose.yml
 ```
 
+### Docker Compose V2 Required
+
+If you get `ModuleNotFoundError: No module named 'distutils'`:
+```bash
+# Install Docker Compose V2
+sudo apt-get install -y docker-compose-plugin
+
+# Use 'docker compose' (two words) instead of 'docker-compose'
+docker compose up -d
+```
+
 ### Database issues
 ```bash
 # Check database permissions
@@ -308,7 +319,7 @@ ls -la backend/database.sqlite
 
 # Recreate database
 rm backend/database.sqlite
-docker-compose restart
+docker compose restart
 ```
 
 ### Ping not working

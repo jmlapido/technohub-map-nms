@@ -21,7 +21,7 @@ cd map-ping
 ### 2. Build and Run with Docker Compose
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 This will:
@@ -80,25 +80,25 @@ To use different paths, modify the `volumes` section in `docker-compose.yml`.
 
 ```bash
 # All logs
-docker-compose logs -f
+docker compose logs -f
 
 # Backend logs only
-docker-compose logs -f map-ping | grep backend
+docker compose logs -f map-ping | grep backend
 
 # Last 100 lines
-docker-compose logs --tail=100 map-ping
+docker compose logs --tail=100 map-ping
 ```
 
 ### Stop the Application
 
 ```bash
-docker-compose down
+docker compose down
 ```
 
 ### Restart the Application
 
 ```bash
-docker-compose restart
+docker compose restart
 ```
 
 ### Update the Application
@@ -108,17 +108,17 @@ docker-compose restart
 git pull
 
 # Rebuild and restart
-docker-compose up -d --build
+docker compose up -d --build
 ```
 
 ### Check Status
 
 ```bash
 # Container status
-docker-compose ps
+docker compose ps
 
 # Health check
-docker-compose exec map-ping wget -qO- http://localhost:5000/api/status
+docker compose exec map-ping wget -qO- http://localhost:5000/api/status
 ```
 
 ## Troubleshooting
@@ -127,7 +127,7 @@ docker-compose exec map-ping wget -qO- http://localhost:5000/api/status
 
 ```bash
 # Check logs
-docker-compose logs map-ping
+docker compose logs map-ping
 
 # Verify ports are available
 netstat -tuln | grep -E ':(4000|5000)'
@@ -152,13 +152,13 @@ The container needs `iputils` package for ping functionality. This is included i
 
 ```bash
 # Stop and remove containers
-docker-compose down -v
+docker compose down -v
 
 # Remove images
 docker rmi map-ping:latest
 
 # Rebuild
-docker-compose up -d --build
+docker compose up -d --build
 ```
 
 ## Production Deployment
@@ -230,13 +230,13 @@ cp backend/database.sqlite backup-$(date +%Y%m%d).sqlite
 
 ```bash
 # Stop the container
-docker-compose down
+docker compose down
 
 # Replace database
 cp backup-20240101.sqlite backend/database.sqlite
 
 # Start the container
-docker-compose up -d
+docker compose up -d
 ```
 
 ## Monitoring

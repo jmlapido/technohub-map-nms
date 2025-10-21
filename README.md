@@ -53,7 +53,7 @@ git clone https://github.com/jmlapido/technohub-map-nms.git
 cd technohub-map-nms
 
 # Start with Docker Compose
-docker-compose up -d
+docker compose up -d
 
 # Access the application
 # Frontend: http://localhost:4000
@@ -62,9 +62,9 @@ docker-compose up -d
 
 **Management:**
 ```bash
-docker-compose logs -f      # View logs
-docker-compose restart      # Restart
-docker-compose down         # Stop
+docker compose logs -f      # View logs
+docker compose restart      # Restart
+docker compose down         # Stop
 ```
 
 📖 **Detailed Docker Guide:** See `DOCKER_README.md`
@@ -255,7 +255,7 @@ Deploy with Docker for easy management and portability:
 
 ```bash
 # Build and run
-docker-compose up -d
+docker compose up -d
 
 # Or pull from GitHub Container Registry
 docker pull ghcr.io/jmlapido/technohub-map-nms:latest
@@ -264,7 +264,7 @@ docker run -d -p 4000:4000 -p 5000:5000 ghcr.io/jmlapido/technohub-map-nms:lates
 
 **Benefits:**
 - ✅ Isolated environment
-- ✅ Easy updates with `docker-compose pull && docker-compose up -d`
+- ✅ Easy updates with `docker compose pull && docker compose up -d`
 - ✅ Persistent data with volumes
 - ✅ Health checks and auto-restart
 - ✅ Works on any platform with Docker
