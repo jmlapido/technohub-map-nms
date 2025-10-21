@@ -16,7 +16,7 @@ services:
       - PORT=4000
     volumes:
       # Persist database and config
-      - ./backend:/app/backend/data
+      - map-ping-data:/app/backend/data
     restart: unless-stopped
     networks:
       - map-ping-network
@@ -26,6 +26,10 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+volumes:
+  map-ping-data:
+    driver: local
 
 networks:
   map-ping-network:
