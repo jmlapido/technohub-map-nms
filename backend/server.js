@@ -6,7 +6,7 @@ const { initDatabase } = require('./database');
 const { startMonitoring } = require('./monitor');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.BACKEND_PORT || 5000;
 
 // Middleware - CORS configuration to allow all origins
 app.use(cors({
