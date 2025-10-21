@@ -41,8 +41,9 @@ logs
 *.md
 !README.md
 
-# Scripts
+# Scripts (but allow docker-entrypoint.sh)
 *.sh
+!docker-entrypoint.sh
 *.bat
 
 # Service files
