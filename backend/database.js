@@ -8,13 +8,32 @@ const dbPath = path.join(dataDir, 'database.sqlite');
 
 // Create data directory if it doesn't exist
 if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+  } catch (error) {
+    console.error('Failed to create data directory:', error);
+  }
 }
 
-const db = new Database(dbPath);
+// Initialize database lazily
+let db = null;
+
+function getDatabase() {
+  if (!db) {
+    try {
+      db = new Database(dbPath);
+      console.log('Database connection established');
+    } catch (error) {
+      console.error('Failed to connect to database:', error);
+      throw error;
+    }
+  }
+  return db;
+}
 
 // Initialize database schema
 function initDatabase() {
+  const db = getDatabase();
   db.exec(`
     CREATE TABLE IF NOT EXISTS ping_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,6 +53,7 @@ function initDatabase() {
 
 // Store ping result
 function storePingResult(deviceId, status, latency, packetLoss) {
+  const db = getDatabase();
   const stmt = db.prepare(`
     INSERT INTO ping_history (device_id, status, latency, packet_loss, timestamp)
     VALUES (?, ?, ?, ?, ?)
@@ -44,6 +64,7 @@ function storePingResult(deviceId, status, latency, packetLoss) {
 
 // Get offline duration for a device
 function getOfflineDuration(deviceId) {
+  const db = getDatabase();
   const stmt = db.prepare(`
     SELECT timestamp FROM ping_history
     WHERE device_id = ? AND status = 'down'
@@ -63,6 +84,7 @@ function getOfflineDuration(deviceId) {
 
 // Get current status for all devices
 function getCurrentStatus(config) {
+  const db = getDatabase();
   const threeDaysAgo = Date.now() - (3 * 24 * 60 * 60 * 1000);
   
   // Get latest ping for each device
@@ -172,6 +194,7 @@ function getCurrentStatus(config) {
 
 // Get device history (last 3 days)
 function getDeviceHistory(deviceId) {
+  const db = getDatabase();
   const threeDaysAgo = Date.now() - (3 * 24 * 60 * 60 * 1000);
   
   const stmt = db.prepare(`
@@ -193,6 +216,7 @@ function getDeviceHistory(deviceId) {
 
 // Clean up old data (older than 3 days)
 function cleanupOldData() {
+  const db = getDatabase();
   const threeDaysAgo = Date.now() - (3 * 24 * 60 * 60 * 1000);
   
   const stmt = db.prepare(`
