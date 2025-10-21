@@ -27,7 +27,8 @@ app.use((req, res, next) => {
 initDatabase();
 
 // Load configuration
-let config = loadConfig();
+const configPath = path.join(__dirname, 'data', 'config.json');
+let config = loadConfig(configPath);
 
 // Start monitoring
 startMonitoring(config);
@@ -69,9 +70,7 @@ app.post('/api/config', (req, res) => {
 });
 
 // Helper functions
-function loadConfig() {
-  const configPath = path.join(__dirname, 'config.json');
-  
+function loadConfig(configPath = path.join(__dirname, 'config.json')) {
   if (fs.existsSync(configPath)) {
     const data = fs.readFileSync(configPath, 'utf8');
     return JSON.parse(data);
@@ -135,7 +134,12 @@ function loadConfig() {
 }
 
 function saveConfig(newConfig) {
-  const configPath = path.join(__dirname, 'config.json');
+  const configPath = path.join(__dirname, 'data', 'config.json');
+  // Create data directory if it doesn't exist
+  const dataDir = path.dirname(configPath);
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
   fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2));
 }
 

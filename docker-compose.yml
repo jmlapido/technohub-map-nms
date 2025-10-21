@@ -15,8 +15,7 @@ services:
       - FRONTEND_PORT=4000
     volumes:
       # Persist database and config
-      - ./backend/database.sqlite:/app/backend/database.sqlite
-      - ./backend/config.json:/app/backend/config.json
+      - ./backend:/app/backend/data
     restart: unless-stopped
     networks:
       - map-ping-network
