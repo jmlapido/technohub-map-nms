@@ -28,6 +28,9 @@ RUN npm ci
 # Copy frontend source
 COPY frontend/ ./
 
+# Create public directory if it doesn't exist
+RUN mkdir -p public
+
 # Build Next.js application
 RUN npm run build
 
