@@ -40,7 +40,10 @@ async function pingAllDevices() {
 
 async function pingDevice(device) {
   try {
-    const result = await ping.promise.probe(device.ip, {
+    // Extract IP address without port (e.g., "192.168.1.1:8080" -> "192.168.1.1")
+    const ipAddress = device.ip.split(':')[0];
+    
+    const result = await ping.promise.probe(ipAddress, {
       timeout: 5,
       min_reply: 3
     });

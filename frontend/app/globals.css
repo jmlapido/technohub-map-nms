@@ -58,5 +58,24 @@
   }
 }
 
+/* Custom area marker styles */
+.custom-area-marker {
+  background: transparent !important;
+  border: none !important;
+}
 
+.area-marker-circle:hover {
+  transform: scale(1.15);
+}
 
+/* Marker pulse animation for focused areas */
+@keyframes pulse-marker {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+  50% {
+    transform: scale(1.2);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 0 10px rgba(59, 130, 246, 0.3);
+  }
+}

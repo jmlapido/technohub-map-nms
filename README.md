@@ -10,6 +10,9 @@ A real-time network monitoring system with geographic visualization built with N
 - 📈 **3-Day History** - Track network performance over time
 - ⚙️ **Easy Configuration** - Simple web-based settings management
 - 🎨 **Modern UI** - Built with shadcn/ui and Tailwind CSS
+- 📊 **Interactive Status Bar** - Docked status panel with minimize/maximize and area focus
+- 💾 **Export/Import Data** - Backup and restore your configuration and monitoring data
+- 🎯 **Auto-Center Map** - Click area names to focus the map with smooth animations
 
 ## Tech Stack
 
@@ -24,6 +27,9 @@ A real-time network monitoring system with geographic visualization built with N
 - Node.js + Express
 - SQLite (better-sqlite3)
 - node-ping
+- archiver (ZIP export)
+- multer (file upload)
+- extract-zip (ZIP import)
 
 ## Project Structure
 
@@ -194,6 +200,23 @@ The system comes with sample data:
 - Add/edit devices (name, IP, area)
 - Define links between areas
 - Adjust monitoring settings
+- Export/Import data backup and restore
+
+## New Features
+
+### Interactive Status Bar
+- **Docked Layout**: Status bar is now docked at the bottom instead of floating
+- **Minimize/Maximize**: Toggle between compact and detailed views
+- **Area Statistics**: Quick overview of online/offline counts by area type
+- **Map Focus**: Click area names to automatically center the map with smooth animations
+- **Marker Animation**: Focused areas show pulsing marker animation for 3 seconds
+
+### Export/Import System
+- **One-Click Backup**: Export your entire configuration and monitoring data as a ZIP file
+- **Safe Import**: Automatic backup of current data before importing new data
+- **File Validation**: Ensures imported files contain valid database and configuration
+- **Auto-Restart**: Monitoring automatically restarts with imported configuration
+- **Backup Management**: Previous data is preserved in timestamped backup folders
 
 ## API Endpoints
 
@@ -202,6 +225,8 @@ GET  /api/status          # Current network status
 GET  /api/history/:device # 3-day history for a device
 GET  /api/config          # Current configuration
 POST /api/config          # Update configuration
+GET  /api/export          # Export data as ZIP file
+POST /api/import          # Import data from ZIP file
 ```
 
 ## Database

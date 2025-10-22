@@ -1,0 +1,47 @@
+{
+  "areas": [
+    {
+      "id": "area-1",
+      "name": "Manila Office",
+      "type": "Homes",
+      "lat": 14.5995,
+      "lng": 120.9842
+    },
+    {
+      "id": "area-1761117055322",
+      "name": "any",
+      "type": "Schools",
+      "lat": 14.5342,
+      "lng": 120.12234
+    }
+  ],
+  "links": [
+    {
+      "id": "link-1",
+      "from": "area-1",
+      "to": "area-2"
+    }
+  ],
+  "devices": [
+    {
+      "id": "device-1",
+      "areaId": "area-1",
+      "name": "Router 1",
+      "type": "router",
+      "ip": "8.8.8.8"
+    }
+  ],
+  "settings": {
+    "pingInterval": 10,
+    "thresholds": {
+      "latency": {
+        "good": 50,
+        "degraded": 150
+      },
+      "packetLoss": {
+        "good": 1,
+        "degraded": 5
+      }
+    }
+  }
+}

@@ -56,7 +56,7 @@ api.interceptors.response.use(
 export interface Area {
   id: string
   name: string
-  type: 'Homes' | 'PisoWiFi Vendo' | 'Schools'
+  type: 'Homes' | 'PisoWiFi Vendo' | 'Schools' | 'Server/Relay'
   lat: number
   lng: number
 }
@@ -137,5 +137,25 @@ export const networkApi = {
   updateConfig: async (config: Partial<Config>): Promise<void> => {
     await api.post('/api/config', config)
   },
+  
+  exportData: async (): Promise<Blob> => {
+    const response = await api.get('/api/export', {
+      responseType: 'blob'
+    })
+    return response.data
+  },
+  
+  importData: async (file: File): Promise<{ success: boolean, message: string }> => {
+    const formData = new FormData()
+    formData.append('backup', file)
+    
+    const { data } = await api.post('/api/import', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    })
+    
+    return data
+  }
 }
 
