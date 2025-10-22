@@ -1,23 +1,62 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { networkApi, type Config } from '@/lib/api'
+import { useEffect, useState, useCallback, useMemo } from 'react'
+import { networkApi, type Config, type Area, type Device, type Link } from '@/lib/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Plus, Trash2, Save, Home, ShoppingBag, GraduationCap, Router, Wifi, Radio, Satellite } from 'lucide-react'
+import { Plus, Trash2, Save, Copy, Search, ChevronDown, ChevronUp, Lock, Check, AlertCircle, Eye, EyeOff, Download, Upload } from 'lucide-react'
+
+const SETTINGS_PASSWORD = '140988'
 
 export default function SettingsPage() {
+  // Authentication
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [passwordInput, setPasswordInput] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [authError, setAuthError] = useState(false)
+
+  // Data states
   const [config, setConfig] = useState<Config | null>(null)
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
+  const [autoSaving, setAutoSaving] = useState(false)
+  const [lastSaved, setLastSaved] = useState<Date | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+
+  // UI states
+  const [searchArea, setSearchArea] = useState('')
+  const [searchDevice, setSearchDevice] = useState('')
+  const [searchLink, setSearchLink] = useState('')
+  const [expandedAreas, setExpandedAreas] = useState<Set<string>>(new Set())
+  
+  // Modal states
+  const [showAreaModal, setShowAreaModal] = useState(false)
+  const [showDeviceModal, setShowDeviceModal] = useState(false)
+  const [showLinkModal, setShowLinkModal] = useState(false)
+  const [editingArea, setEditingArea] = useState<Area | null>(null)
+  const [editingDevice, setEditingDevice] = useState<Device | null>(null)
+  const [editingLink, setEditingLink] = useState<Link | null>(null)
+  
+  // Export/Import states
+  const [isExporting, setIsExporting] = useState(false)
+  const [isImporting, setIsImporting] = useState(false)
 
   useEffect(() => {
     loadConfig()
   }, [])
+
+  // Auto-save effect with debounce
+  useEffect(() => {
+    if (!config || !isAuthenticated) return
+    
+    const timeoutId = setTimeout(() => {
+      autoSaveConfig()
+    }, 2000) // Auto-save after 2 seconds of no changes
+
+    return () => clearTimeout(timeoutId)
+  }, [config, isAuthenticated])
 
   const loadConfig = async () => {
     try {
@@ -30,37 +69,72 @@ export default function SettingsPage() {
     }
   }
 
-  const saveConfig = async () => {
+  const autoSaveConfig = async () => {
     if (!config) return
     
-    setSaving(true)
-    setMessage(null)
+    setAutoSaving(true)
     
     try {
       await networkApi.updateConfig(config)
-      setMessage({ type: 'success', text: 'Settings saved successfully!' })
-      setTimeout(() => setMessage(null), 3000)
+      setLastSaved(new Date())
+      setMessage({ type: 'success', text: '✓ Auto-saved' })
+      setTimeout(() => setMessage(null), 2000)
     } catch (err) {
-      setMessage({ type: 'error', text: 'Failed to save settings' })
+      setMessage({ type: 'error', text: 'Auto-save failed' })
     } finally {
-      setSaving(false)
+      setAutoSaving(false)
     }
   }
 
-  const addArea = () => {
-    if (!config) return
-    const newArea = {
-      id: `area-${Date.now()}`,
-      name: 'New Area',
-      type: 'Homes' as const,
-      lat: 14.5995,
-      lng: 120.9842
+  const handlePasswordSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (passwordInput === SETTINGS_PASSWORD) {
+      setIsAuthenticated(true)
+      setAuthError(false)
+    } else {
+      setAuthError(true)
+      setTimeout(() => setAuthError(false), 2000)
     }
-    setConfig({ ...config, areas: [...config.areas, newArea] })
+  }
+
+  // Area CRUD
+  const openAreaModal = (area: Area | null = null) => {
+    setEditingArea(area)
+    setShowAreaModal(true)
+  }
+
+  const saveArea = (area: Area) => {
+    if (!config) return
+    
+    if (editingArea) {
+      // Update existing
+      setConfig({
+        ...config,
+        areas: config.areas.map(a => a.id === area.id ? area : a)
+      })
+    } else {
+      // Add new
+      setConfig({ ...config, areas: [...config.areas, { ...area, id: `area-${Date.now()}` }] })
+    }
+    
+    setShowAreaModal(false)
+    setEditingArea(null)
+  }
+
+  const duplicateArea = (area: Area) => {
+    if (!config) return
+    const duplicated = {
+      ...area,
+      id: `area-${Date.now()}`,
+      name: `${area.name} (Copy)`
+    }
+    setConfig({ ...config, areas: [...config.areas, duplicated] })
   }
 
   const removeArea = (id: string) => {
     if (!config) return
+    if (!confirm('Delete this area? All devices in this area will also be removed.')) return
+    
     setConfig({
       ...config,
       areas: config.areas.filter(a => a.id !== id),
@@ -68,36 +142,258 @@ export default function SettingsPage() {
     })
   }
 
-  const addDevice = () => {
-    if (!config || config.areas.length === 0) return
-    const newDevice = {
-      id: `device-${Date.now()}`,
-      areaId: config.areas[0].id,
-      name: 'New Device',
-      type: 'router' as const,
-      ip: '192.168.1.1'
+  // Device CRUD
+  const openDeviceModal = (device: Device | null = null) => {
+    setEditingDevice(device)
+    setShowDeviceModal(true)
+  }
+
+  const saveDevice = (device: Device) => {
+    if (!config) return
+    
+    if (editingDevice) {
+      // Update existing
+      setConfig({
+        ...config,
+        devices: config.devices.map(d => d.id === device.id ? device : d)
+      })
+    } else {
+      // Add new
+      setConfig({ ...config, devices: [...config.devices, { ...device, id: `device-${Date.now()}` }] })
     }
-    setConfig({ ...config, devices: [...config.devices, newDevice] })
+    
+    setShowDeviceModal(false)
+    setEditingDevice(null)
+  }
+
+  const duplicateDevice = (device: Device) => {
+    if (!config) return
+    const duplicated = {
+      ...device,
+      id: `device-${Date.now()}`,
+      name: `${device.name} (Copy)`
+    }
+    setConfig({ ...config, devices: [...config.devices, duplicated] })
   }
 
   const removeDevice = (id: string) => {
     if (!config) return
+    if (!confirm('Delete this device?')) return
     setConfig({ ...config, devices: config.devices.filter(d => d.id !== id) })
   }
 
-  const addLink = () => {
-    if (!config || config.areas.length < 2) return
-    const newLink = {
-      id: `link-${Date.now()}`,
-      from: config.areas[0].id,
-      to: config.areas[1].id
+  // Link CRUD
+  const openLinkModal = (link: Link | null = null) => {
+    setEditingLink(link)
+    setShowLinkModal(true)
+  }
+
+  const saveLink = (link: Link) => {
+    if (!config) return
+    
+    if (editingLink) {
+      // Update existing
+      setConfig({
+        ...config,
+        links: config.links.map(l => l.id === link.id ? link : l)
+      })
+    } else {
+      // Add new
+      setConfig({ ...config, links: [...config.links, { ...link, id: `link-${Date.now()}` }] })
     }
-    setConfig({ ...config, links: [...config.links, newLink] })
+    
+    setShowLinkModal(false)
+    setEditingLink(null)
+  }
+
+  const duplicateLink = (link: Link) => {
+    if (!config) return
+    const duplicated = {
+      ...link,
+      id: `link-${Date.now()}`
+    }
+    setConfig({ ...config, links: [...config.links, duplicated] })
   }
 
   const removeLink = (id: string) => {
     if (!config) return
+    if (!confirm('Delete this link?')) return
     setConfig({ ...config, links: config.links.filter(l => l.id !== id) })
+  }
+
+  // Toggle area expansion
+  const toggleAreaExpansion = (areaId: string) => {
+    const newExpanded = new Set(expandedAreas)
+    if (newExpanded.has(areaId)) {
+      newExpanded.delete(areaId)
+    } else {
+      newExpanded.add(areaId)
+    }
+    setExpandedAreas(newExpanded)
+  }
+
+  // Export handler
+  const handleExport = async () => {
+    setIsExporting(true)
+    setMessage(null)
+    
+    try {
+      const blob = await networkApi.exportData()
+      
+      // Create download link
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `map-ping-backup-${new Date().toISOString().split('T')[0]}.zip`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+      
+      setMessage({ type: 'success', text: 'Data exported successfully!' })
+      setTimeout(() => setMessage(null), 3000)
+    } catch (err) {
+      console.error('Export error:', err)
+      setMessage({ type: 'error', text: 'Failed to export data' })
+    } finally {
+      setIsExporting(false)
+    }
+  }
+
+  // Import handler
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    
+    if (!file.name.endsWith('.zip')) {
+      setMessage({ type: 'error', text: 'Please select a valid backup file (.zip)' })
+      return
+    }
+    
+    if (!confirm('Import will replace all current data. A backup will be created. Continue?')) {
+      e.target.value = ''
+      return
+    }
+    
+    setIsImporting(true)
+    setMessage(null)
+    
+    try {
+      const result = await networkApi.importData(file)
+      
+      setMessage({ type: 'success', text: result.message || 'Data imported successfully!' })
+      
+      // Reload config after import
+      setTimeout(() => {
+        loadConfig()
+        setMessage(null)
+      }, 2000)
+      
+    } catch (err: any) {
+      console.error('Import error:', err)
+      setMessage({ 
+        type: 'error', 
+        text: err.message || 'Failed to import data' 
+      })
+    } finally {
+      setIsImporting(false)
+      e.target.value = ''
+    }
+  }
+
+  // Filtered and grouped data
+  const filteredAreas = useMemo(() => {
+    if (!config) return []
+    return config.areas.filter(area =>
+      area.name.toLowerCase().includes(searchArea.toLowerCase()) ||
+      area.type.toLowerCase().includes(searchArea.toLowerCase())
+    )
+  }, [config?.areas, searchArea])
+
+  const groupedDevices = useMemo(() => {
+    if (!config) return new Map()
+    
+    const grouped = new Map<string, Device[]>()
+    
+    config.devices
+      .filter(device =>
+        device.name.toLowerCase().includes(searchDevice.toLowerCase()) ||
+        device.ip.toLowerCase().includes(searchDevice.toLowerCase()) ||
+        device.type.toLowerCase().includes(searchDevice.toLowerCase())
+      )
+      .forEach(device => {
+        const areaId = device.areaId
+        if (!grouped.has(areaId)) {
+          grouped.set(areaId, [])
+        }
+        grouped.get(areaId)!.push(device)
+      })
+    
+    return grouped
+  }, [config?.devices, searchDevice])
+
+  const filteredLinks = useMemo(() => {
+    if (!config) return []
+    return config.links.filter(link => {
+      const fromArea = config.areas.find(a => a.id === link.from)
+      const toArea = config.areas.find(a => a.id === link.to)
+      const searchLower = searchLink.toLowerCase()
+      return (
+        fromArea?.name.toLowerCase().includes(searchLower) ||
+        toArea?.name.toLowerCase().includes(searchLower)
+      )
+    })
+  }, [config?.links, config?.areas, searchLink])
+
+  // Password screen
+  if (!isAuthenticated) {
+    return (
+      <div className="flex items-center justify-center h-full bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
+        <Card className="w-full max-w-md mx-4">
+          <CardHeader className="text-center">
+            <div className="mx-auto w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mb-4">
+              <Lock className="w-6 h-6 text-primary" />
+            </div>
+            <CardTitle className="text-2xl">Settings Access</CardTitle>
+            <CardDescription>Enter password to access settings</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handlePasswordSubmit} className="space-y-4">
+              <div>
+                <Label htmlFor="password">Password</Label>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={passwordInput}
+                    onChange={(e) => setPasswordInput(e.target.value)}
+                    placeholder="Enter password"
+                    className={authError ? 'border-red-500' : ''}
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                {authError && (
+                  <p className="text-sm text-red-500 mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    Incorrect password
+                  </p>
+                )}
+              </div>
+              <Button type="submit" className="w-full">
+                Unlock Settings
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   if (loading) {
@@ -118,257 +414,298 @@ export default function SettingsPage() {
 
   return (
     <div className="h-full overflow-auto p-4 lg:p-6">
+      {/* Header with auto-save status */}
       <div className="mb-4 lg:mb-6">
-        <h1 className="text-2xl lg:text-3xl font-bold mb-1 lg:mb-2">Settings</h1>
-        <p className="text-sm lg:text-base text-muted-foreground">Configure your network monitoring</p>
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-2xl lg:text-3xl font-bold mb-1 lg:mb-2">Settings</h1>
+            <p className="text-sm lg:text-base text-muted-foreground">Configure your network monitoring</p>
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            {autoSaving && (
+              <Badge variant="secondary" className="animate-pulse">
+                Saving...
+              </Badge>
+            )}
+            {lastSaved && !autoSaving && (
+              <Badge variant="outline" className="text-green-600 border-green-200">
+                <Check className="w-3 h-3 mr-1" />
+                Saved {new Date(lastSaved).toLocaleTimeString()}
+              </Badge>
+            )}
+          </div>
+        </div>
       </div>
 
       {message && (
-        <div className={`mb-4 p-3 lg:p-4 rounded-md text-sm lg:text-base ${
-          message.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'
+        <div className={`mb-4 p-3 lg:p-4 rounded-md text-sm lg:text-base flex items-center gap-2 ${
+          message.type === 'success' ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-200'
         }`}>
+          {message.type === 'success' ? <Check className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
           {message.text}
         </div>
       )}
 
-      {/* Areas */}
+      {/* Areas Section */}
       <Card className="mb-4 lg:mb-6">
         <CardHeader className="p-4 lg:p-6">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-            <div>
-              <CardTitle className="text-lg lg:text-xl">Areas</CardTitle>
-              <CardDescription className="text-xs lg:text-sm">Define network sites/locations</CardDescription>
-            </div>
-            <Button onClick={addArea} size="sm" className="w-full lg:w-auto">
-              <Plus className="w-4 h-4 mr-2" />
-              Add Area
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3 lg:space-y-4 p-4 lg:p-6 pt-0">
-          {config.areas.map((area, idx) => (
-            <div key={area.id} className="flex gap-4 items-start p-4 border rounded-md">
-              <div className="flex-1 space-y-2">
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label>Name</Label>
-                    <Input
-                      value={area.name}
-                      onChange={(e) => {
-                        const newAreas = [...config.areas]
-                        newAreas[idx].name = e.target.value
-                        setConfig({ ...config, areas: newAreas })
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <Label>Type</Label>
-                    <select
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      value={area.type}
-                      onChange={(e) => {
-                        const newAreas = [...config.areas]
-                        newAreas[idx].type = e.target.value as 'Homes' | 'PisoWiFi Vendo' | 'Schools'
-                        setConfig({ ...config, areas: newAreas })
-                      }}
-                    >
-                      <option value="Homes">🏠 Homes</option>
-                      <option value="PisoWiFi Vendo">🛒 PisoWiFi Vendo</option>
-                      <option value="Schools">🎓 Schools</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label>Latitude</Label>
-                    <Input
-                      type="number"
-                      step="0.0001"
-                      value={area.lat}
-                      onChange={(e) => {
-                        const newAreas = [...config.areas]
-                        newAreas[idx].lat = parseFloat(e.target.value)
-                        setConfig({ ...config, areas: newAreas })
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <Label>Longitude</Label>
-                    <Input
-                      type="number"
-                      step="0.0001"
-                      value={area.lng}
-                      onChange={(e) => {
-                        const newAreas = [...config.areas]
-                        newAreas[idx].lng = parseFloat(e.target.value)
-                        setConfig({ ...config, areas: newAreas })
-                      }}
-                    />
-                  </div>
-                </div>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+              <div>
+                <CardTitle className="text-lg lg:text-xl">Areas ({filteredAreas.length})</CardTitle>
+                <CardDescription className="text-xs lg:text-sm">Network sites and locations</CardDescription>
               </div>
-              <Button
-                variant="destructive"
-                size="icon"
-                onClick={() => removeArea(area.id)}
-              >
-                <Trash2 className="w-4 h-4" />
+              <Button onClick={() => openAreaModal()} size="sm" className="w-full lg:w-auto">
+                <Plus className="w-4 h-4 mr-2" />
+                Add Area
               </Button>
             </div>
-          ))}
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Search areas..."
+                value={searchArea}
+                onChange={(e) => setSearchArea(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-2 p-4 lg:p-6 pt-0">
+          {filteredAreas.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8">No areas found</p>
+          ) : (
+            filteredAreas.map((area) => (
+              <div key={area.id} className="flex items-center gap-2 p-3 border rounded-md hover:bg-accent/50 transition-colors">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium truncate">{area.name}</span>
+                    <Badge variant="outline" className="text-xs shrink-0">{area.type}</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {area.lat.toFixed(4)}, {area.lng.toFixed(4)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => openAreaModal(area)}
+                    className="h-8 w-8"
+                    title="Edit"
+                  >
+                    <Search className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => duplicateArea(area)}
+                    className="h-8 w-8"
+                    title="Duplicate"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => removeArea(area.id)}
+                    className="h-8 w-8 hover:bg-destructive hover:text-destructive-foreground"
+                    title="Delete"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+            ))
+          )}
         </CardContent>
       </Card>
 
-      {/* Devices */}
+      {/* Devices Section - Grouped by Area */}
       <Card className="mb-4 lg:mb-6">
         <CardHeader className="p-4 lg:p-6">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-            <div>
-              <CardTitle className="text-lg lg:text-xl">Devices</CardTitle>
-              <CardDescription className="text-xs lg:text-sm">Network devices to monitor</CardDescription>
-            </div>
-            <Button onClick={addDevice} size="sm" className="w-full lg:w-auto">
-              <Plus className="w-4 h-4 mr-2" />
-              Add Device
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3 lg:space-y-4 p-4 lg:p-6 pt-0">
-          {config.devices.map((device, idx) => (
-            <div key={device.id} className="flex gap-4 items-start p-4 border rounded-md">
-              <div className="flex-1 space-y-2">
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label>Name</Label>
-                    <Input
-                      value={device.name}
-                      onChange={(e) => {
-                        const newDevices = [...config.devices]
-                        newDevices[idx].name = e.target.value
-                        setConfig({ ...config, devices: newDevices })
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <Label>Type</Label>
-                    <select
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      value={device.type}
-                      onChange={(e) => {
-                        const newDevices = [...config.devices]
-                        newDevices[idx].type = e.target.value as 'wireless-antenna' | 'wifi-soho' | 'router' | 'wifi-outdoor'
-                        setConfig({ ...config, devices: newDevices })
-                      }}
-                    >
-                      <option value="wireless-antenna">📡 Wireless Antenna</option>
-                      <option value="wifi-soho">📶 WiFi SOHO Router/AP</option>
-                      <option value="router">🔌 Router</option>
-                      <option value="wifi-outdoor">📻 WiFi Outdoor AP</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label>IP Address</Label>
-                    <Input
-                      value={device.ip}
-                      onChange={(e) => {
-                        const newDevices = [...config.devices]
-                        newDevices[idx].ip = e.target.value
-                        setConfig({ ...config, devices: newDevices })
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <Label>Area</Label>
-                    <select
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      value={device.areaId}
-                      onChange={(e) => {
-                        const newDevices = [...config.devices]
-                        newDevices[idx].areaId = e.target.value
-                        setConfig({ ...config, devices: newDevices })
-                      }}
-                    >
-                      {config.areas.map(area => (
-                        <option key={area.id} value={area.id}>{area.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+              <div>
+                <CardTitle className="text-lg lg:text-xl">Devices ({config.devices.length})</CardTitle>
+                <CardDescription className="text-xs lg:text-sm">Network devices grouped by area</CardDescription>
               </div>
-              <Button
-                variant="destructive"
-                size="icon"
-                onClick={() => removeDevice(device.id)}
-              >
-                <Trash2 className="w-4 h-4" />
+              <Button onClick={() => openDeviceModal()} size="sm" className="w-full lg:w-auto" disabled={config.areas.length === 0}>
+                <Plus className="w-4 h-4 mr-2" />
+                Add Device
               </Button>
             </div>
-          ))}
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Search devices..."
+                value={searchDevice}
+                onChange={(e) => setSearchDevice(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3 p-4 lg:p-6 pt-0">
+          {config.areas.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8">Add an area first to create devices</p>
+          ) : (
+            config.areas.map((area) => {
+              const devicesInArea = groupedDevices.get(area.id) || []
+              const isExpanded = expandedAreas.has(area.id)
+
+              return (
+                <div key={area.id} className="border rounded-md overflow-hidden">
+                  {/* Area Header */}
+                  <button
+                    onClick={() => toggleAreaExpansion(area.id)}
+                    className="w-full flex items-center justify-between p-3 hover:bg-accent/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+                      <span className="font-medium">{area.name}</span>
+                      <Badge variant="secondary" className="text-xs">{devicesInArea.length} devices</Badge>
+                    </div>
+                  </button>
+
+                  {/* Devices List */}
+                  {isExpanded && (
+                    <div className="border-t bg-accent/10">
+                      {devicesInArea.length === 0 ? (
+                        <p className="text-center text-sm text-muted-foreground py-4">No devices in this area</p>
+                      ) : (
+                        <div className="divide-y">
+                          {devicesInArea.map((device) => (
+                            <div key={device.id} className="flex items-center gap-2 p-3 hover:bg-background transition-colors">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium truncate">{device.name}</span>
+                                  <Badge variant="outline" className="text-xs shrink-0">{device.type}</Badge>
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-1">IP: {device.ip}</p>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => openDeviceModal(device)}
+                                  className="h-8 w-8"
+                                  title="Edit"
+                                >
+                                  <Search className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => duplicateDevice(device)}
+                                  className="h-8 w-8"
+                                  title="Duplicate"
+                                >
+                                  <Copy className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => removeDevice(device.id)}
+                                  className="h-8 w-8 hover:bg-destructive hover:text-destructive-foreground"
+                                  title="Delete"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })
+          )}
         </CardContent>
       </Card>
 
-      {/* Links */}
+      {/* Links Section */}
       <Card className="mb-4 lg:mb-6">
         <CardHeader className="p-4 lg:p-6">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-            <div>
-              <CardTitle className="text-lg lg:text-xl">Links</CardTitle>
-              <CardDescription className="text-xs lg:text-sm">Connections between areas</CardDescription>
-            </div>
-            <Button onClick={addLink} size="sm" className="w-full lg:w-auto">
-              <Plus className="w-4 h-4 mr-2" />
-              Add Link
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3 lg:space-y-4 p-4 lg:p-6 pt-0">
-          {config.links.map((link, idx) => (
-            <div key={link.id} className="flex gap-4 items-center p-4 border rounded-md">
-              <div className="flex-1 grid grid-cols-2 gap-2">
-                <div>
-                  <Label>From</Label>
-                  <select
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    value={link.from}
-                    onChange={(e) => {
-                      const newLinks = [...config.links]
-                      newLinks[idx].from = e.target.value
-                      setConfig({ ...config, links: newLinks })
-                    }}
-                  >
-                    {config.areas.map(area => (
-                      <option key={area.id} value={area.id}>{area.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <Label>To</Label>
-                  <select
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    value={link.to}
-                    onChange={(e) => {
-                      const newLinks = [...config.links]
-                      newLinks[idx].to = e.target.value
-                      setConfig({ ...config, links: newLinks })
-                    }}
-                  >
-                    {config.areas.map(area => (
-                      <option key={area.id} value={area.id}>{area.name}</option>
-                    ))}
-                  </select>
-                </div>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+              <div>
+                <CardTitle className="text-lg lg:text-xl">Links ({filteredLinks.length})</CardTitle>
+                <CardDescription className="text-xs lg:text-sm">Connections between areas</CardDescription>
               </div>
-              <Button
-                variant="destructive"
-                size="icon"
-                onClick={() => removeLink(link.id)}
-              >
-                <Trash2 className="w-4 h-4" />
+              <Button onClick={() => openLinkModal()} size="sm" className="w-full lg:w-auto" disabled={config.areas.length < 2}>
+                <Plus className="w-4 h-4 mr-2" />
+                Add Link
               </Button>
             </div>
-          ))}
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Search links..."
+                value={searchLink}
+                onChange={(e) => setSearchLink(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-2 p-4 lg:p-6 pt-0">
+          {config.areas.length < 2 ? (
+            <p className="text-center text-muted-foreground py-8">Add at least 2 areas to create links</p>
+          ) : filteredLinks.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8">No links found</p>
+          ) : (
+            filteredLinks.map((link) => {
+              const fromArea = config.areas.find(a => a.id === link.from)
+              const toArea = config.areas.find(a => a.id === link.to)
+              
+              return (
+                <div key={link.id} className="flex items-center gap-2 p-3 border rounded-md hover:bg-accent/50 transition-colors">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="font-medium truncate">{fromArea?.name || 'Unknown'}</span>
+                      <span className="text-muted-foreground">→</span>
+                      <span className="font-medium truncate">{toArea?.name || 'Unknown'}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => openLinkModal(link)}
+                      className="h-8 w-8"
+                      title="Edit"
+                    >
+                      <Search className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => duplicateLink(link)}
+                      className="h-8 w-8"
+                      title="Duplicate"
+                    >
+                      <Copy className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removeLink(link.id)}
+                      className="h-8 w-8 hover:bg-destructive hover:text-destructive-foreground"
+                      title="Delete"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              )
+            })
+          )}
         </CardContent>
       </Card>
 
@@ -445,13 +782,379 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Save Button */}
-      <div className="flex justify-end">
-        <Button onClick={saveConfig} disabled={saving} size="lg">
-          <Save className="w-4 h-4 mr-2" />
-          {saving ? 'Saving...' : 'Save Settings'}
-        </Button>
-      </div>
+      {/* Export/Import Settings */}
+      <Card className="mb-4 lg:mb-6">
+        <CardHeader className="p-4 lg:p-6">
+          <CardTitle className="text-lg lg:text-xl">Backup & Restore</CardTitle>
+          <CardDescription className="text-xs lg:text-sm">
+            Export your data for backup or import from a previous backup
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4 p-4 lg:p-6 pt-0">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Export Section */}
+            <div className="space-y-2">
+              <Label className="text-base font-semibold">Export Data</Label>
+              <p className="text-xs text-muted-foreground mb-3">
+                Download a backup file containing your database and configuration
+              </p>
+              <Button 
+                onClick={handleExport} 
+                disabled={isExporting}
+                className="w-full"
+                variant="outline"
+              >
+                {isExporting ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary mr-2"></div>
+                    Exporting...
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4 mr-2" />
+                    Export Data
+                  </>
+                )}
+              </Button>
+            </div>
+
+            {/* Import Section */}
+            <div className="space-y-2">
+              <Label className="text-base font-semibold">Import Data</Label>
+              <p className="text-xs text-muted-foreground mb-3">
+                Restore from a backup file (current data will be backed up)
+              </p>
+              <div className="relative">
+                <input
+                  type="file"
+                  accept=".zip"
+                  onChange={handleImport}
+                  disabled={isImporting}
+                  className="hidden"
+                  id="import-file"
+                />
+                <Button 
+                  onClick={() => document.getElementById('import-file')?.click()}
+                  disabled={isImporting}
+                  className="w-full"
+                  variant="outline"
+                >
+                  {isImporting ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary mr-2"></div>
+                      Importing...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4 mr-2" />
+                      Import Data
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {/* Info Box */}
+          <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-md p-3">
+            <div className="flex gap-2">
+              <AlertCircle className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+              <div className="text-xs text-blue-800 dark:text-blue-300 space-y-1">
+                <p><strong>Export:</strong> Creates a ZIP file with your database and settings</p>
+                <p><strong>Import:</strong> Restores from a backup. Your current data will be automatically backed up first</p>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Area Modal */}
+      {showAreaModal && (
+        <AreaModal
+          area={editingArea}
+          onSave={saveArea}
+          onClose={() => {
+            setShowAreaModal(false)
+            setEditingArea(null)
+          }}
+        />
+      )}
+
+      {/* Device Modal */}
+      {showDeviceModal && (
+        <DeviceModal
+          device={editingDevice}
+          areas={config.areas}
+          onSave={saveDevice}
+          onClose={() => {
+            setShowDeviceModal(false)
+            setEditingDevice(null)
+          }}
+        />
+      )}
+
+      {/* Link Modal */}
+      {showLinkModal && (
+        <LinkModal
+          link={editingLink}
+          areas={config.areas}
+          onSave={saveLink}
+          onClose={() => {
+            setShowLinkModal(false)
+            setEditingLink(null)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// Area Modal Component
+function AreaModal({ area, onSave, onClose }: { area: Area | null, onSave: (area: Area) => void, onClose: () => void }) {
+  const [formData, setFormData] = useState<Area>(area || {
+    id: '',
+    name: '',
+    type: 'Homes',
+    lat: 14.5995,
+    lng: 120.9842
+  })
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    onSave(formData)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <Card className="w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+        <CardHeader>
+          <CardTitle>{area ? 'Edit Area' : 'Add New Area'}</CardTitle>
+          <CardDescription>Configure area location and type</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <Label htmlFor="area-name">Name *</Label>
+              <Input
+                id="area-name"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                placeholder="e.g., Main Office"
+                required
+                autoFocus
+              />
+            </div>
+            
+            <div>
+              <Label htmlFor="area-type">Type *</Label>
+              <select
+                id="area-type"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={formData.type}
+                onChange={(e) => setFormData({ ...formData, type: e.target.value as Area['type'] })}
+              >
+                <option value="Homes">🏠 Homes</option>
+                <option value="PisoWiFi Vendo">🛒 PisoWiFi Vendo</option>
+                <option value="Schools">🎓 Schools</option>
+                <option value="Server/Relay">📡 Server/Relay</option>
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="area-lat">Latitude *</Label>
+                <Input
+                  id="area-lat"
+                  type="number"
+                  step="0.0001"
+                  value={formData.lat}
+                  onChange={(e) => setFormData({ ...formData, lat: parseFloat(e.target.value) || 0 })}
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="area-lng">Longitude *</Label>
+                <Input
+                  id="area-lng"
+                  type="number"
+                  step="0.0001"
+                  value={formData.lng}
+                  onChange={(e) => setFormData({ ...formData, lng: parseFloat(e.target.value) || 0 })}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2 justify-end pt-4">
+              <Button type="button" variant="outline" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button type="submit">
+                <Save className="w-4 h-4 mr-2" />
+                {area ? 'Update' : 'Create'}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// Device Modal Component
+function DeviceModal({ device, areas, onSave, onClose }: { device: Device | null, areas: Area[], onSave: (device: Device) => void, onClose: () => void }) {
+  const [formData, setFormData] = useState<Device>(device || {
+    id: '',
+    areaId: areas[0]?.id || '',
+    name: '',
+    type: 'router',
+    ip: ''
+  })
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    onSave(formData)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <Card className="w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+        <CardHeader>
+          <CardTitle>{device ? 'Edit Device' : 'Add New Device'}</CardTitle>
+          <CardDescription>Configure device details and location</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <Label htmlFor="device-name">Name *</Label>
+              <Input
+                id="device-name"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                placeholder="e.g., Main Router"
+                required
+                autoFocus
+              />
+            </div>
+            
+            <div>
+              <Label htmlFor="device-type">Type *</Label>
+              <select
+                id="device-type"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={formData.type}
+                onChange={(e) => setFormData({ ...formData, type: e.target.value as Device['type'] })}
+              >
+                <option value="wireless-antenna">📡 Wireless Antenna</option>
+                <option value="wifi-soho">📶 WiFi SOHO Router/AP</option>
+                <option value="router">🔌 Router</option>
+                <option value="wifi-outdoor">📻 WiFi Outdoor AP</option>
+              </select>
+            </div>
+
+            <div>
+              <Label htmlFor="device-ip">IP Address *</Label>
+              <Input
+                id="device-ip"
+                value={formData.ip}
+                onChange={(e) => setFormData({ ...formData, ip: e.target.value })}
+                placeholder="e.g., 192.168.1.1"
+                required
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="device-area">Area *</Label>
+              <select
+                id="device-area"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={formData.areaId}
+                onChange={(e) => setFormData({ ...formData, areaId: e.target.value })}
+              >
+                {areas.map(area => (
+                  <option key={area.id} value={area.id}>{area.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex gap-2 justify-end pt-4">
+              <Button type="button" variant="outline" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button type="submit">
+                <Save className="w-4 h-4 mr-2" />
+                {device ? 'Update' : 'Create'}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// Link Modal Component
+function LinkModal({ link, areas, onSave, onClose }: { link: Link | null, areas: Area[], onSave: (link: Link) => void, onClose: () => void }) {
+  const [formData, setFormData] = useState<Link>(link || {
+    id: '',
+    from: areas[0]?.id || '',
+    to: areas[1]?.id || ''
+  })
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    onSave(formData)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <Card className="w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+        <CardHeader>
+          <CardTitle>{link ? 'Edit Link' : 'Add New Link'}</CardTitle>
+          <CardDescription>Configure connection between areas</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <Label htmlFor="link-from">From Area *</Label>
+              <select
+                id="link-from"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={formData.from}
+                onChange={(e) => setFormData({ ...formData, from: e.target.value })}
+              >
+                {areas.map(area => (
+                  <option key={area.id} value={area.id}>{area.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <Label htmlFor="link-to">To Area *</Label>
+              <select
+                id="link-to"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={formData.to}
+                onChange={(e) => setFormData({ ...formData, to: e.target.value })}
+              >
+                {areas.map(area => (
+                  <option key={area.id} value={area.id}>{area.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex gap-2 justify-end pt-4">
+              <Button type="button" variant="outline" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button type="submit">
+                <Save className="w-4 h-4 mr-2" />
+                {link ? 'Update' : 'Create'}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   )
 }

@@ -1,0 +1,24 @@
+{
+  "areas": [],
+  "links": [
+    {
+      "id": "link-1",
+      "from": "area-1",
+      "to": "area-2"
+    }
+  ],
+  "devices": [],
+  "settings": {
+    "pingInterval": 10,
+    "thresholds": {
+      "latency": {
+        "good": 50,
+        "degraded": 150
+      },
+      "packetLoss": {
+        "good": 1,
+        "degraded": 5
+      }
+    }
+  }
+}
