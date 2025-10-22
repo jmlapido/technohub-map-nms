@@ -57,15 +57,46 @@ Add this configuration:
 tunnel: map-ping
 credentials-file: /root/.cloudflared/<tunnel-id>.json
 
+# Performance and stability settings for better connection handling
+originRequest:
+  # Increase timeouts for better stability
+  connectTimeout: 30s
+  tlsTimeout: 10s
+  tcpKeepAlive: 30s
+  keepAliveConnections: 10
+  keepAliveTimeout: 90s
+  
+  # Disable compression for API calls (can cause issues)
+  disableChunkedEncoding: false
+  
+  # Add custom headers
+  httpHostHeader: map.jmlapido.com
+  originServerName: map.jmlapido.com
+
 ingress:
-  # Route API requests to backend
+  # API routes with specific settings for stability
   - hostname: map.jmlapido.com
     path: /api/*
     service: http://localhost:5000
+    originRequest:
+      # API-specific settings for frequent polling
+      connectTimeout: 30s
+      tlsTimeout: 10s
+      tcpKeepAlive: 30s
+      keepAliveConnections: 20
+      keepAliveTimeout: 90s
+      httpHostHeader: map.jmlapido.com
   
-  # Route all other requests to frontend
+  # Frontend routes
   - hostname: map.jmlapido.com
     service: http://localhost:4000
+    originRequest:
+      connectTimeout: 30s
+      tlsTimeout: 10s
+      tcpKeepAlive: 30s
+      keepAliveConnections: 10
+      keepAliveTimeout: 90s
+      httpHostHeader: map.jmlapido.com
   
   # Catch-all rule (required)
   - service: http_status:404
@@ -314,13 +345,82 @@ sudo cp /etc/cloudflared/config.yml ~/backup-cloudflared-config.yml
 docker run --rm -v technohub-map-nms_map-ping-data:/data -v $(pwd):/backup alpine tar czf /backup/backup-$(date +%Y%m%d).tar.gz /data
 ```
 
+## Optimal Cloudflare Dashboard Settings
+
+### SSL/TLS Configuration
+```
+SSL/TLS encryption mode: Full (strict)
+Edge Certificates: Always Use HTTPS ✅
+Automatic HTTPS Rewrites ✅
+Minimum TLS Version: 1.2
+```
+
+### Security Settings (Optimized for Stability)
+```
+Security Level: Medium (not High or I'm Under Attack)
+Bot Fight Mode: OFF (can cause issues with frequent polling)
+Challenge Passage: 30 minutes (instead of default 5 minutes)
+Browser Integrity Check: OFF (can interfere with API calls)
+```
+
+### Firewall Rules (Create These)
+Go to **Security → WAF → Custom Rules** and create:
+
+**Rule 1: Allow API Polling**
+```
+Field: URI Path
+Operator: starts with
+Value: /api/
+Action: Skip all remaining rules
+```
+
+**Rule 2: Allow Frequent Requests**
+```
+Field: Request Rate
+Operator: is greater than
+Value: 20 requests per minute
+AND
+Field: URI Path
+Operator: does not start with
+Value: /api/
+Action: Challenge (not Block)
+```
+
+### Page Rules (Create This)
+Go to **Rules → Page Rules** and create:
+
+```
+URL: map.jmlapido.com/api/*
+Settings:
+- Cache Level: Bypass Cache
+- Security Level: Essentially Off
+- Disable Security
+- Disable Performance
+```
+
+### Speed Settings
+```
+Auto Minify: OFF (can cause issues with dynamic content)
+Brotli: ON
+HTTP/2: ON
+HTTP/3 (with QUIC): ON
+0-RTT Connection Resumption: ON
+```
+
+### Caching Settings
+```
+Caching Level: Standard
+Browser Cache TTL: 2 hours
+Edge Cache TTL: 2 hours
+```
+
 ## Security Recommendations
 
 1. **Cloudflare Security Settings:**
    - Enable "Always Use HTTPS"
    - Enable "Automatic HTTPS Rewrites"
    - Set SSL/TLS to "Full (strict)"
-   - Enable "Bot Fight Mode" or "Super Bot Fight Mode"
+   - Use the optimized settings above for better stability
 
 2. **Firewall:**
    ```bash

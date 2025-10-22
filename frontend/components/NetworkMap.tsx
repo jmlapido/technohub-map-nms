@@ -238,7 +238,11 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
           style={{ height: '100%', width: '100%', zIndex: 1 }}
           ref={mapRef}
           className="z-0"
-          whenReady={(e) => handleMapCreated(e.target)}
+          whenReady={() => {
+            if (mapRef.current) {
+              handleMapCreated(mapRef.current)
+            }
+          }}
         >
         {mapView === 'street' ? (
           <TileLayer

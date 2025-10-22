@@ -32,7 +32,11 @@ const API_BASE = getApiBaseUrl()
 
 export const api = axios.create({
   baseURL: API_BASE,
-  timeout: 10000,
+  timeout: 30000, // Increased from 10s to 30s for better stability
+  headers: {
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache'
+  }
 })
 
 // Add request interceptor for debugging
@@ -41,14 +45,25 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Add response interceptor for error handling
+// Add response interceptor with retry logic for better stability
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    const config = error.config
+    
     console.error('API Error:', error.message)
     if (error.code === 'ECONNABORTED') {
       console.error('Request timeout - backend may not be responding')
     }
+    
+    // Retry logic for failed requests (server errors and timeouts)
+    if (!config._retry && (error.response?.status >= 500 || error.code === 'ECONNABORTED' || error.code === 'ECONNREFUSED')) {
+      config._retry = true
+      console.log('Retrying request after error...')
+      await new Promise(resolve => setTimeout(resolve, 2000)) // Wait 2s before retry
+      return api(config)
+    }
+    
     return Promise.reject(error)
   }
 )

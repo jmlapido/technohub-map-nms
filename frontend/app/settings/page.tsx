@@ -311,7 +311,7 @@ export default function SettingsPage() {
   }, [config?.areas, searchArea])
 
   const groupedDevices = useMemo(() => {
-    if (!config) return new Map()
+    if (!config) return new Map<string, Device[]>()
     
     const grouped = new Map<string, Device[]>()
     
@@ -553,7 +553,7 @@ export default function SettingsPage() {
             <p className="text-center text-muted-foreground py-8">Add an area first to create devices</p>
           ) : (
             config.areas.map((area) => {
-              const devicesInArea = groupedDevices.get(area.id) || []
+              const devicesInArea: Device[] = groupedDevices.get(area.id) || []
               const isExpanded = expandedAreas.has(area.id)
 
               return (
@@ -577,7 +577,7 @@ export default function SettingsPage() {
                         <p className="text-center text-sm text-muted-foreground py-4">No devices in this area</p>
                       ) : (
                         <div className="divide-y">
-                          {devicesInArea.map((device) => (
+                          {devicesInArea.map((device: Device) => (
                             <div key={device.id} className="flex items-center gap-2 p-3 hover:bg-background transition-colors">
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
