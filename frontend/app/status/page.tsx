@@ -14,12 +14,18 @@ export default function StatusPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'up' | 'down' | 'degraded'>('all')
   const [areaTypeFilter, setAreaTypeFilter] = useState<string>('all')
+  const [retryCount, setRetryCount] = useState(0)
 
   useEffect(() => {
     loadData()
-    const interval = setInterval(loadData, 10000)
+    
+    // Dynamic interval based on retry count with exponential backoff
+    const baseInterval = 10000
+    const retryInterval = Math.min(baseInterval * Math.pow(1.5, retryCount), 60000) // Max 60s
+    
+    const interval = setInterval(loadData, retryInterval)
     return () => clearInterval(interval)
-  }, [])
+  }, [retryCount])
 
   const loadData = async () => {
     try {
@@ -30,9 +36,11 @@ export default function StatusPage() {
       setStatus(statusData)
       setConfig(configData)
       setLoading(false)
+      setRetryCount(0) // Reset retry count on success
     } catch (err) {
       console.error('Failed to load data:', err)
       setLoading(false)
+      setRetryCount(prev => prev + 1)
     }
   }
 

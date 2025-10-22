@@ -23,15 +23,18 @@ export default function Home() {
   const [config, setConfig] = useState<Config | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [retryCount, setRetryCount] = useState(0)
 
   useEffect(() => {
     loadData()
     
-    // Refresh every 10 seconds
-    const interval = setInterval(loadData, 10000)
+    // Dynamic interval based on retry count with exponential backoff
+    const baseInterval = 10000
+    const retryInterval = Math.min(baseInterval * Math.pow(1.5, retryCount), 60000) // Max 60s
     
+    const interval = setInterval(loadData, retryInterval)
     return () => clearInterval(interval)
-  }, [])
+  }, [retryCount])
 
   const loadData = async () => {
     try {
@@ -43,10 +46,12 @@ export default function Home() {
       setConfig(configData)
       setLoading(false)
       setError(null)
+      setRetryCount(0) // Reset retry count on success
     } catch (err) {
       console.error('Failed to load data:', err)
-      setError('Failed to connect to backend. Make sure the backend server is running.')
+      setError('Connection lost. Retrying...')
       setLoading(false)
+      setRetryCount(prev => prev + 1)
     }
   }
 
