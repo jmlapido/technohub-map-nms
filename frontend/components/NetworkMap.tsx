@@ -30,6 +30,15 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
   const [mapView, setMapView] = useState<'street' | 'satellite'>('street')
   const mapRef = useRef<L.Map>(null)
 
+  // Calculate initial bounds from all areas
+  const getInitialBounds = () => {
+    if (config.areas.length > 0) {
+      const coords = config.areas.map(area => [area.lat, area.lng] as [number, number])
+      return L.latLngBounds(coords)
+    }
+    return null
+  }
+
   useEffect(() => {
     // Calculate bounds to fit all areas
     if (config.areas.length > 0) {
@@ -37,12 +46,29 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
       const newBounds = L.latLngBounds(coords)
       setBounds(newBounds)
       
-      // Fit map to bounds
+      // Fit map to bounds with padding to ensure all markers are visible
       if (mapRef.current) {
-        mapRef.current.fitBounds(newBounds, { padding: [50, 50] })
+        // Small delay to ensure map is fully initialized
+        setTimeout(() => {
+          mapRef.current?.fitBounds(newBounds, { 
+            padding: [80, 80], // Increased padding for better visibility
+            maxZoom: 15 // Prevent zooming in too close
+          })
+        }, 100)
       }
     }
   }, [config.areas])
+
+  // Also fit bounds when map becomes ready
+  const handleMapCreated = (map: L.Map) => {
+    const initialBounds = getInitialBounds()
+    if (initialBounds) {
+      map.fitBounds(initialBounds, { 
+        padding: [80, 80],
+        maxZoom: 15
+      })
+    }
+  }
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -138,6 +164,7 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
         style={{ height: '100%', width: '100%', zIndex: 1 }}
         ref={mapRef}
         className="z-0"
+        whenReady={(e) => handleMapCreated(e.target)}
       >
         {mapView === 'street' ? (
           <TileLayer
