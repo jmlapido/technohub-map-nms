@@ -20,6 +20,80 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Helper functions
+function loadConfig(configPath = path.join(__dirname, 'data', 'config.json')) {
+  if (fs.existsSync(configPath)) {
+    const data = fs.readFileSync(configPath, 'utf8');
+    return JSON.parse(data);
+  }
+  
+  // Default configuration
+  return {
+    areas: [
+      {
+        id: 'area-1',
+        name: 'Manila Office',
+        type: 'Homes',
+        lat: 14.5995,
+        lng: 120.9842
+      },
+      {
+        id: 'area-2',
+        name: 'Cebu Office',
+        type: 'Schools',
+        lat: 10.3157,
+        lng: 123.8854
+      }
+    ],
+    links: [
+      {
+        id: 'link-1',
+        from: 'area-1',
+        to: 'area-2'
+      }
+    ],
+    devices: [
+      {
+        id: 'device-1',
+        areaId: 'area-1',
+        name: 'Router 1',
+        type: 'router',
+        ip: '8.8.8.8'
+      },
+      {
+        id: 'device-2',
+        areaId: 'area-2',
+        name: 'Router 2',
+        type: 'router',
+        ip: '1.1.1.1'
+      }
+    ],
+    settings: {
+      pingInterval: 10,
+      thresholds: {
+        latency: {
+          good: 50,
+          degraded: 150
+        },
+        packetLoss: {
+          good: 1,
+          degraded: 5
+        }
+      }
+    }
+  };
+}
+
+function saveConfig(newConfig) {
+  const configPath = path.join(__dirname, 'data', 'config.json');
+  // Create data directory if it doesn't exist
+  const dataDir = path.dirname(configPath);
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+  fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2));
+}
+
 // Add logging middleware
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path} from ${req.ip}`);
@@ -217,80 +291,6 @@ app.post('/api/import', upload.single('backup'), async (req, res) => {
     });
   }
 });
-
-// Helper functions
-function loadConfig(configPath = path.join(__dirname, 'config.json')) {
-  if (fs.existsSync(configPath)) {
-    const data = fs.readFileSync(configPath, 'utf8');
-    return JSON.parse(data);
-  }
-  
-  // Default configuration
-  return {
-    areas: [
-      {
-        id: 'area-1',
-        name: 'Manila Office',
-        type: 'Homes',
-        lat: 14.5995,
-        lng: 120.9842
-      },
-      {
-        id: 'area-2',
-        name: 'Cebu Office',
-        type: 'Schools',
-        lat: 10.3157,
-        lng: 123.8854
-      }
-    ],
-    links: [
-      {
-        id: 'link-1',
-        from: 'area-1',
-        to: 'area-2'
-      }
-    ],
-    devices: [
-      {
-        id: 'device-1',
-        areaId: 'area-1',
-        name: 'Router 1',
-        type: 'router',
-        ip: '8.8.8.8'
-      },
-      {
-        id: 'device-2',
-        areaId: 'area-2',
-        name: 'Router 2',
-        type: 'router',
-        ip: '1.1.1.1'
-      }
-    ],
-    settings: {
-      pingInterval: 10,
-      thresholds: {
-        latency: {
-          good: 50,
-          degraded: 150
-        },
-        packetLoss: {
-          good: 1,
-          degraded: 5
-        }
-      }
-    }
-  };
-}
-
-function saveConfig(newConfig) {
-  const configPath = path.join(__dirname, 'data', 'config.json');
-  // Create data directory if it doesn't exist
-  const dataDir = path.dirname(configPath);
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-  fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2));
-}
 
 app.listen(PORT, () => {
   console.log(`Backend server running on port ${PORT}`);
