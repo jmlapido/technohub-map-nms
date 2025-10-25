@@ -141,13 +141,7 @@ This will:
 
 ```bash
 # Start the service
-sudo systemctl start cloudflared
-
-# Enable to start on boot
-sudo systemctl enable cloudflared
-
-# Check status
-sudo systemctl status cloudflared
+0
 ```
 
 ## Step 9: Update Docker Compose

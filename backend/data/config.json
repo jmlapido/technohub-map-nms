@@ -13,13 +13,34 @@
       "type": "Schools",
       "lat": 14.5342,
       "lng": 120.12234
+    },
+    {
+      "id": "area-1761241216749",
+      "name": "ytesy22",
+      "type": "PisoWiFi Vendo",
+      "lat": 14.2345,
+      "lng": 122.4842
+    },
+    {
+      "id": "area-1761241614244",
+      "name": "test12",
+      "type": "Server/Relay",
+      "lat": 6.515631679769614,
+      "lng": 124.63459893036023
+    },
+    {
+      "id": "area-1761392249368",
+      "name": "test12 (Copy)",
+      "type": "Server/Relay",
+      "lat": 6.534279769614,
+      "lng": 124.3239893036023
     }
   ],
   "links": [
     {
       "id": "link-1",
       "from": "area-1",
-      "to": "area-2"
+      "to": "area-1761241216749"
     }
   ],
   "devices": [
@@ -32,7 +53,7 @@
     }
   ],
   "settings": {
-    "pingInterval": 10,
+    "pingInterval": 15,
     "thresholds": {
       "latency": {
         "good": 50,

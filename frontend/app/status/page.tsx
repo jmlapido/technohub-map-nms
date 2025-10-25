@@ -14,33 +14,27 @@ export default function StatusPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'up' | 'down' | 'degraded'>('all')
   const [areaTypeFilter, setAreaTypeFilter] = useState<string>('all')
-  const [retryCount, setRetryCount] = useState(0)
 
   useEffect(() => {
     loadData()
     
-    // Dynamic interval based on retry count with exponential backoff
-    const baseInterval = 10000
-    const retryInterval = Math.min(baseInterval * Math.pow(1.5, retryCount), 60000) // Max 60s
-    
-    const interval = setInterval(loadData, retryInterval)
+    // Fixed interval - no need to recreate on every retry
+    const interval = setInterval(loadData, 15000) // 15 seconds to reduce load
     return () => clearInterval(interval)
-  }, [retryCount])
+  }, []) // Empty dependency array - only run once on mount
 
   const loadData = async () => {
     try {
       const [statusData, configData] = await Promise.all([
         networkApi.getStatus(),
-        networkApi.getConfig()
+        networkApi.getPublicConfig()
       ])
       setStatus(statusData)
       setConfig(configData)
       setLoading(false)
-      setRetryCount(0) // Reset retry count on success
     } catch (err) {
       console.error('Failed to load data:', err)
       setLoading(false)
-      setRetryCount(prev => prev + 1)
     }
   }
 
@@ -81,9 +75,27 @@ export default function StatusPage() {
     return stats
   }, [groupedAreas])
 
-  // Get unique area types for filter
+  // Get unique area types for filter, sorted in specific order
   const areaTypes = useMemo(() => {
-    return Object.keys(groupedAreas)
+    const allTypes = Object.keys(groupedAreas)
+    const sortedOrder = ['Server/Relay', 'Schools', 'PisoWiFi Vendo', 'Homes']
+    
+    // Sort by predefined order, then add any remaining types
+    const sortedTypes: string[] = []
+    sortedOrder.forEach(type => {
+      if (allTypes.includes(type)) {
+        sortedTypes.push(type)
+      }
+    })
+    
+    // Add any remaining types not in the predefined order
+    allTypes.forEach(type => {
+      if (!sortedOrder.includes(type)) {
+        sortedTypes.push(type)
+      }
+    })
+    
+    return sortedTypes
   }, [groupedAreas])
 
   // Filter and search logic
@@ -254,107 +266,65 @@ export default function StatusPage() {
         </div>
       </div>
 
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 lg:gap-4 mb-4 lg:mb-6">
-        <Card className="border-2 hover:border-blue-300 transition-all">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 lg:p-6">
-            <CardTitle className="text-xs lg:text-sm font-medium">Total Devices</CardTitle>
-            <Activity className="h-4 w-4 text-blue-600" />
-          </CardHeader>
-          <CardContent className="p-3 lg:p-6 pt-0">
-            <div className="text-xl lg:text-2xl font-bold">{totalDevices}</div>
-            <p className="text-xs text-muted-foreground">
-              {upDevices} online, {downDevices} offline
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-2 hover:border-purple-300 transition-all">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 lg:p-6">
-            <CardTitle className="text-xs lg:text-sm font-medium">Areas</CardTitle>
-            <Activity className="h-4 w-4 text-purple-600" />
-          </CardHeader>
-          <CardContent className="p-3 lg:p-6 pt-0">
-            <div className="text-xl lg:text-2xl font-bold">{status.areas.length}</div>
-            <p className="text-xs text-muted-foreground">
-              {status.areas.filter(a => a.status === 'up').length} operational
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className={`border-2 transition-all ${
-          downDevices === 0 ? 'hover:border-green-300' : 'hover:border-yellow-300'
-        }`}>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 lg:p-6">
-            <CardTitle className="text-xs lg:text-sm font-medium">Health</CardTitle>
-            {downDevices === 0 ? (
-              <CheckCircle2 className="h-4 w-4 text-green-500" />
-            ) : (
-              <AlertTriangle className="h-4 w-4 text-yellow-500" />
-            )}
-          </CardHeader>
-          <CardContent className="p-3 lg:p-6 pt-0">
-            <div className="text-xl lg:text-2xl font-bold">
-              {totalDevices > 0 ? Math.round((upDevices / totalDevices) * 100) : 0}%
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {downDevices === 0 ? 'All systems operational' : `${downDevices} issues detected`}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
 
       {/* Area Type Summary Cards */}
       <div className="mb-4 lg:mb-6">
-        <h2 className="text-lg lg:text-xl font-semibold mb-3">Area Types Overview</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 lg:gap-4">
-          {Object.entries(areaTypeStats).map(([type, stats]) => {
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 lg:gap-4">
+          {areaTypes.map(type => {
+            const stats = areaTypeStats[type]
+            if (!stats) return null
             const healthPercent = stats.totalDevices > 0 ? Math.round((stats.upDevices / stats.totalDevices) * 100) : 0
             return (
               <Card key={type} className="border-2 hover:shadow-lg transition-all">
-                <CardHeader className="p-4 lg:p-6 pb-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                <CardHeader className="p-2 lg:p-4 pb-1.5 lg:pb-2">
+                  <div className="flex flex-col gap-1.5 lg:gap-0 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="flex items-center gap-1.5">
                       {getAreaTypeIcon(type)}
-                      <CardTitle className="text-base lg:text-lg">{type}</CardTitle>
+                      <CardTitle className="text-xs lg:text-base truncate">{type}</CardTitle>
                     </div>
-                    <Badge variant="outline" className="text-xs">
+                    <Badge variant="outline" className="text-xs px-1.5 py-0.5 w-fit">
                       {stats.totalAreas} {stats.totalAreas === 1 ? 'area' : 'areas'}
                     </Badge>
                   </div>
                 </CardHeader>
-                <CardContent className="p-4 lg:p-6 pt-0">
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-muted-foreground">Devices</span>
-                      <span className="text-sm font-semibold">{stats.totalDevices}</span>
+                <CardContent className="p-2 lg:p-4 pt-0">
+                  <div className="space-y-1 lg:space-y-1.5">
+                    {/* Mobile: Horizontal layout for stats */}
+                    <div className="flex justify-between items-center lg:flex-col lg:items-start lg:justify-start">
+                      <div className="flex items-center gap-1.5 lg:gap-0 lg:justify-between lg:w-full">
+                        <span className="text-xs text-muted-foreground">Devices</span>
+                        <span className="text-xs font-semibold">{stats.totalDevices}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 lg:gap-0 lg:justify-between lg:w-full lg:mt-0.5">
+                        <span className="text-xs text-muted-foreground">Online</span>
+                        <span className="text-xs font-semibold text-green-600">{stats.upDevices}</span>
+                      </div>
                     </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-muted-foreground">Online</span>
-                      <span className="text-sm font-semibold text-green-600">{stats.upDevices}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-muted-foreground">Offline</span>
-                      <span className="text-sm font-semibold text-red-600">{stats.downDevices}</span>
-                    </div>
-                    <div className="pt-2 border-t">
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm font-medium">Health</span>
-                        <span className={`text-lg font-bold ${
+                    
+                    {/* Mobile: Compact health display */}
+                    <div className="pt-1 lg:pt-1.5 border-t">
+                      <div className="flex justify-between items-center mb-0.5">
+                        <span className="text-xs font-medium">Health</span>
+                        <span className={`text-xs lg:text-sm font-bold ${
                           healthPercent === 100 ? 'text-green-600' : 
                           healthPercent >= 80 ? 'text-yellow-600' : 'text-red-600'
                         }`}>
                           {healthPercent}%
                         </span>
                       </div>
-                      <div className="mt-2 w-full bg-gray-200 rounded-full h-2">
+                      <div className="w-full bg-gray-200 rounded-full h-1 lg:h-1.5">
                         <div 
-                          className={`h-2 rounded-full transition-all ${
+                          className={`h-1 lg:h-1.5 rounded-full transition-all ${
                             healthPercent === 100 ? 'bg-green-600' : 
                             healthPercent >= 80 ? 'bg-yellow-600' : 'bg-red-600'
                           }`}
                           style={{ width: `${healthPercent}%` }}
                         ></div>
+                      </div>
+                      {/* Show offline count on mobile */}
+                      <div className="flex justify-between items-center mt-0.5 lg:hidden">
+                        <span className="text-xs text-muted-foreground">Offline</span>
+                        <span className="text-xs font-semibold text-red-600">{stats.downDevices}</span>
                       </div>
                     </div>
                   </div>
@@ -376,15 +346,15 @@ export default function StatusPage() {
               placeholder="Search devices or areas..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
+              className="pl-10 h-9 lg:h-10"
             />
           </div>
           
-          {/* Status Filter */}
-          <div className="flex gap-2">
+          {/* Status Filter - Optimized for mobile */}
+          <div className="flex gap-1 lg:gap-2 overflow-x-auto pb-1 lg:pb-0">
             <button
               onClick={() => setStatusFilter('all')}
-              className={`px-3 py-2 text-sm rounded-md transition-all ${
+              className={`px-2 lg:px-3 py-1.5 lg:py-2 text-xs lg:text-sm rounded-md transition-all whitespace-nowrap ${
                 statusFilter === 'all' 
                   ? 'bg-primary text-primary-foreground' 
                   : 'bg-muted hover:bg-muted/80'
@@ -394,64 +364,74 @@ export default function StatusPage() {
             </button>
             <button
               onClick={() => setStatusFilter('up')}
-              className={`px-3 py-2 text-sm rounded-md transition-all flex items-center gap-1 ${
+              className={`px-2 lg:px-3 py-1.5 lg:py-2 text-xs lg:text-sm rounded-md transition-all flex items-center gap-1 whitespace-nowrap ${
                 statusFilter === 'up' 
                   ? 'bg-green-600 text-white' 
                   : 'bg-muted hover:bg-muted/80'
               }`}
             >
               <CheckCircle2 className="h-3 w-3" />
-              Online
+              <span className="hidden sm:inline">Online</span>
+              <span className="sm:hidden">Up</span>
             </button>
             <button
               onClick={() => setStatusFilter('down')}
-              className={`px-3 py-2 text-sm rounded-md transition-all flex items-center gap-1 ${
+              className={`px-2 lg:px-3 py-1.5 lg:py-2 text-xs lg:text-sm rounded-md transition-all flex items-center gap-1 whitespace-nowrap ${
                 statusFilter === 'down' 
                   ? 'bg-red-600 text-white' 
                   : 'bg-muted hover:bg-muted/80'
               }`}
             >
               <XCircle className="h-3 w-3" />
-              Offline
+              <span className="hidden sm:inline">Offline</span>
+              <span className="sm:hidden">Down</span>
             </button>
             <button
               onClick={() => setStatusFilter('degraded')}
-              className={`px-3 py-2 text-sm rounded-md transition-all flex items-center gap-1 ${
+              className={`px-2 lg:px-3 py-1.5 lg:py-2 text-xs lg:text-sm rounded-md transition-all flex items-center gap-1 whitespace-nowrap ${
                 statusFilter === 'degraded' 
                   ? 'bg-yellow-600 text-white' 
                   : 'bg-muted hover:bg-muted/80'
               }`}
             >
               <AlertTriangle className="h-3 w-3" />
-              Degraded
+              <span className="hidden sm:inline">Degraded</span>
+              <span className="sm:hidden">Deg</span>
             </button>
           </div>
         </div>
 
-        {/* Area Type Filter */}
-        <div className="flex flex-wrap gap-2">
+        {/* Area Type Filter - Optimized for mobile */}
+        <div className="flex flex-wrap gap-1.5 lg:gap-2">
           <button
             onClick={() => setAreaTypeFilter('all')}
-            className={`px-3 py-1.5 text-sm rounded-md transition-all ${
+            className={`px-2 lg:px-3 py-1 lg:py-1.5 text-xs lg:text-sm rounded-md transition-all ${
               areaTypeFilter === 'all' 
                 ? 'bg-primary text-primary-foreground' 
                 : 'bg-muted hover:bg-muted/80'
             }`}
           >
-            All Types
+            <span className="hidden sm:inline">All Types</span>
+            <span className="sm:hidden">All</span>
           </button>
           {areaTypes.map(type => (
             <button
               key={type}
               onClick={() => setAreaTypeFilter(type)}
-              className={`px-3 py-1.5 text-sm rounded-md transition-all flex items-center gap-1.5 ${
+              className={`px-2 lg:px-3 py-1 lg:py-1.5 text-xs lg:text-sm rounded-md transition-all flex items-center gap-1 lg:gap-1.5 ${
                 areaTypeFilter === type 
                   ? 'bg-primary text-primary-foreground' 
                   : 'bg-muted hover:bg-muted/80'
               }`}
             >
               {getAreaTypeIcon(type)}
-              {type}
+              <span className="hidden sm:inline">{type}</span>
+              <span className="sm:hidden">
+                {type === 'Server/Relay' ? 'Server' :
+                 type === 'PisoWiFi Vendo' ? 'PisoWiFi' :
+                 type === 'Schools' ? 'Schools' :
+                 type === 'Homes' ? 'Homes' : type}
+              </span>
             </button>
           ))}
         </div>
@@ -485,7 +465,9 @@ export default function StatusPage() {
             </div>
           </Card>
         ) : (
-          Object.entries(filteredGroupedAreas).map(([type, areas]) => (
+          areaTypes.filter(type => filteredGroupedAreas[type] && filteredGroupedAreas[type].length > 0).map(type => {
+            const areas = filteredGroupedAreas[type]
+            return (
             <div key={type}>
               <div className="flex items-center gap-2 mb-3">
                 {getAreaTypeIcon(type)}
@@ -501,18 +483,18 @@ export default function StatusPage() {
                   
                   return (
                     <Card key={area.areaId} className="border-2 hover:shadow-md transition-all">
-                      <CardHeader className="p-4 lg:p-6 pb-3">
-                        <div className="flex flex-col gap-3">
-                          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2">
+                      <CardHeader className="p-3 lg:p-4 pb-2">
+                        <div className="flex flex-col gap-2">
+                          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-1.5">
                             <div>
-                              <CardTitle className="text-base lg:text-lg">{area.areaInfo?.name || area.areaId}</CardTitle>
-                              <CardDescription className="text-xs lg:text-sm mt-1">
+                              <CardTitle className="text-sm lg:text-base">{area.areaInfo?.name || area.areaId}</CardTitle>
+                              <CardDescription className="text-xs mt-0.5">
                                 {area.devices.length} {area.devices.length === 1 ? 'device' : 'devices'}
-                                {upCount > 0 && <span className="text-green-600 ml-2">{upCount} online</span>}
-                                {downCount > 0 && <span className="text-red-600 ml-2">{downCount} offline</span>}
+                                {upCount > 0 && <span className="text-green-600 ml-1">{upCount} online</span>}
+                                {downCount > 0 && <span className="text-red-600 ml-1">{downCount} offline</span>}
                               </CardDescription>
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5">
                               {getStatusIcon(area.status)}
                               <Badge 
                                 className={
@@ -528,9 +510,9 @@ export default function StatusPage() {
                           
                           {/* Device Type Breakdown */}
                           {Object.keys(deviceTypeBreakdown).length > 0 && (
-                            <div className="flex flex-wrap gap-2">
+                            <div className="flex flex-wrap gap-1">
                               {Object.entries(deviceTypeBreakdown).map(([type, count]) => (
-                                <Badge key={type} variant="outline" className="text-xs">
+                                <Badge key={type} variant="outline" className="text-xs px-1.5 py-0.5">
                                   {getDeviceTypeIcon(type)}
                                   <span className="ml-1">{count} {getDeviceTypeName(type)}</span>
                                 </Badge>
@@ -539,42 +521,45 @@ export default function StatusPage() {
                           )}
                         </div>
                       </CardHeader>
-                      <CardContent className="p-4 lg:p-6 pt-0">
-                        <div className="space-y-2">
+                      <CardContent className="p-3 lg:p-4 pt-0">
+                        <div className="space-y-1">
                           {area.devices.map((device: DeviceStatus, idx: number) => {
                             const deviceInfo = config.devices.find(d => d.id === device.deviceId)
                             return (
-                              <div key={idx} className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 p-3 bg-muted rounded-md hover:bg-muted/80 transition-colors">
-                                <div className="flex items-center gap-3">
+                              <div key={idx} className="flex flex-row items-center justify-between gap-1.5 p-1.5 lg:p-2 bg-muted rounded-md hover:bg-muted/80 transition-colors">
+                                {/* Left side: Icon, Device Name, Status */}
+                                <div className="flex items-center gap-1.5 lg:gap-2 min-w-0 flex-1">
                                   {getDeviceTypeIcon(deviceInfo?.type || 'router')}
-                                  <div>
-                                    <div className="font-medium text-sm lg:text-base">{deviceInfo?.name || device.deviceId}</div>
-                                    <a 
-                                      href={formatIpAsUrl(deviceInfo?.ip || '')} 
-                                      target="_blank" 
-                                      rel="noopener noreferrer"
-                                      className="text-xs lg:text-sm text-blue-600 hover:text-blue-800 hover:underline transition-colors inline-flex items-center gap-1"
+                                  <div className="flex flex-col lg:flex-row lg:items-center lg:gap-1.5 gap-0.5 min-w-0">
+                                    <div className="font-medium text-xs truncate">{deviceInfo?.name || device.deviceId}</div>
+                                    <Badge 
+                                      className={`text-xs px-1 py-0.5 shrink-0 ${
+                                        device.status === 'up' ? 'bg-green-600 hover:bg-green-700' :
+                                        device.status === 'down' ? 'bg-red-600 hover:bg-red-700' :
+                                        'bg-yellow-600 hover:bg-yellow-700'
+                                      }`}
                                     >
-                                      {deviceInfo?.ip}
-                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                                      </svg>
-                                    </a>
+                                      {device.status === 'up' ? 'online' : device.status}
+                                    </Badge>
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-3">
+                                
+                                {/* Right side: Ping Status, IP */}
+                                <div className="flex items-center gap-1.5 shrink-0">
                                   {device.latency && (
-                                    <span className="text-xs lg:text-sm font-medium text-muted-foreground">{device.latency}ms</span>
+                                    <span className="text-xs font-medium text-muted-foreground">{device.latency}ms</span>
                                   )}
-                                  <Badge 
-                                    className={
-                                      device.status === 'up' ? 'bg-green-600 hover:bg-green-700' :
-                                      device.status === 'down' ? 'bg-red-600 hover:bg-red-700' :
-                                      'bg-yellow-600 hover:bg-yellow-700'
-                                    }
+                                  <a 
+                                    href={formatIpAsUrl(deviceInfo?.ip || '')} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="text-xs text-blue-600 hover:text-blue-800 hover:underline transition-colors inline-flex items-center gap-0.5"
                                   >
-                                    {device.status === 'up' ? 'online' : device.status}
-                                  </Badge>
+                                    {deviceInfo?.ip}
+                                    <svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                    </svg>
+                                  </a>
                                 </div>
                               </div>
                             )
@@ -586,7 +571,8 @@ export default function StatusPage() {
                 })}
               </div>
             </div>
-          ))
+            )
+          })
         )}
       </div>
     </div>

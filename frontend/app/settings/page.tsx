@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { networkApi, type Config, type Area, type Device, type Link } from '@/lib/api'
+import { networkApi, authApi, setAuthToken, clearAuthToken, getAuthStatus, type Config, type Area, type Device, type Link } from '@/lib/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,14 +9,19 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Plus, Trash2, Save, Copy, Search, ChevronDown, ChevronUp, Lock, Check, AlertCircle, Eye, EyeOff, Download, Upload } from 'lucide-react'
 
-const SETTINGS_PASSWORD = '140988'
-
 export default function SettingsPage() {
   // Authentication
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [passwordInput, setPasswordInput] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [authError, setAuthError] = useState(false)
+  const [sessionExpiresAt, setSessionExpiresAt] = useState<Date | null>(null)
+  const [showChangePassword, setShowChangePassword] = useState(false)
+  const [changePasswordData, setChangePasswordData] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  })
 
   // Data states
   const [config, setConfig] = useState<Config | null>(null)
@@ -24,6 +29,9 @@ export default function SettingsPage() {
   const [autoSaving, setAutoSaving] = useState(false)
   const [lastSaved, setLastSaved] = useState<Date | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+  
+  // Client-side hydration flag
+  const [isClient, setIsClient] = useState(false)
 
   // UI states
   const [searchArea, setSearchArea] = useState('')
@@ -44,19 +52,47 @@ export default function SettingsPage() {
   const [isImporting, setIsImporting] = useState(false)
 
   useEffect(() => {
-    loadConfig()
+    setIsClient(true)
+    checkAuthStatus()
   }, [])
 
-  // Auto-save effect with debounce
+  // Listen for authentication failures
   useEffect(() => {
-    if (!config || !isAuthenticated) return
-    
-    const timeoutId = setTimeout(() => {
-      autoSaveConfig()
-    }, 2000) // Auto-save after 2 seconds of no changes
+    const handleAuthFailed = () => {
+      setIsAuthenticated(false)
+      setSessionExpiresAt(null)
+    }
 
-    return () => clearTimeout(timeoutId)
-  }, [config, isAuthenticated])
+    window.addEventListener('auth-failed', handleAuthFailed)
+    return () => window.removeEventListener('auth-failed', handleAuthFailed)
+  }, [])
+
+  const checkAuthStatus = async () => {
+    try {
+      // First check if we have a valid token locally
+      const localAuthStatus = getAuthStatus()
+      
+      if (localAuthStatus.isAuthenticated && localAuthStatus.tokenExpiry) {
+        // We have a valid token locally, set authenticated state
+        setIsAuthenticated(true)
+        setSessionExpiresAt(localAuthStatus.tokenExpiry)
+        loadConfig()
+        return
+      }
+      
+      // No valid token locally, try to verify with server
+      const status = await authApi.getAuthStatus()
+      setIsAuthenticated(status.authenticated)
+      setSessionExpiresAt(new Date(status.sessionExpiresAt))
+      if (status.authenticated) {
+        loadConfig()
+      }
+    } catch (err) {
+      setIsAuthenticated(false)
+      setSessionExpiresAt(null)
+      setLoading(false)
+    }
+  }
 
   const loadConfig = async () => {
     try {
@@ -69,31 +105,108 @@ export default function SettingsPage() {
     }
   }
 
-  const autoSaveConfig = async () => {
-    if (!config) return
+  const autoSaveConfig = useCallback(async () => {
+    if (!config || !isAuthenticated) {
+      console.log('Auto-save skipped: no config or not authenticated')
+      return
+    }
     
+    console.log('Starting auto-save...')
     setAutoSaving(true)
     
     try {
       await networkApi.updateConfig(config)
+      console.log('Auto-save successful')
       setLastSaved(new Date())
       setMessage({ type: 'success', text: '✓ Auto-saved' })
       setTimeout(() => setMessage(null), 2000)
-    } catch (err) {
-      setMessage({ type: 'error', text: 'Auto-save failed' })
+    } catch (err: any) {
+      console.error('Auto-save error:', err)
+      console.error('Error details:', {
+        message: err.message,
+        status: err.response?.status,
+        statusText: err.response?.statusText,
+        data: err.response?.data
+      })
+      
+      // Check if it's an authentication error
+      if (err.response?.status === 401) {
+        console.log('Authentication error detected, logging out')
+        setMessage({ type: 'error', text: 'Session expired. Please log in again.' })
+        setIsAuthenticated(false)
+        setSessionExpiresAt(null)
+      } else if (err.message === 'Request throttled') {
+        // Don't show error for throttled requests, just skip this save
+        console.log('Auto-save skipped due to throttling')
+      } else {
+        setMessage({ type: 'error', text: 'Auto-save failed' })
+      }
     } finally {
       setAutoSaving(false)
     }
+  }, [config, isAuthenticated])
+
+  // Auto-save effect with debounce
+  useEffect(() => {
+    if (!config || !isAuthenticated) return
+    
+    const timeoutId = setTimeout(() => {
+      autoSaveConfig()
+    }, 5000) // Auto-save after 5 seconds of no changes
+
+    return () => clearTimeout(timeoutId)
+  }, [config, isAuthenticated, autoSaveConfig])
+
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setAuthError(false)
+    
+    try {
+      const response = await authApi.login(passwordInput)
+      setAuthToken(response.token, response.expiresAt)
+      setIsAuthenticated(true)
+      setSessionExpiresAt(new Date(response.expiresAt))
+      setPasswordInput('')
+      loadConfig()
+    } catch (err) {
+      setAuthError(true)
+      setPasswordInput('')
+      setTimeout(() => setAuthError(false), 2000)
+    }
   }
 
-  const handlePasswordSubmit = (e: React.FormEvent) => {
+  const handleLogout = async () => {
+    try {
+      await authApi.logout()
+    } catch (err) {
+      // Ignore errors
+    }
+    setIsAuthenticated(false)
+    setSessionExpiresAt(null)
+    setConfig(null)
+    setPasswordInput('')
+  }
+
+  const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (passwordInput === SETTINGS_PASSWORD) {
-      setIsAuthenticated(true)
-      setAuthError(false)
-    } else {
-      setAuthError(true)
-      setTimeout(() => setAuthError(false), 2000)
+    
+    if (changePasswordData.newPassword !== changePasswordData.confirmPassword) {
+      setMessage({ type: 'error', text: 'New passwords do not match' })
+      return
+    }
+    
+    if (changePasswordData.newPassword.length < 6) {
+      setMessage({ type: 'error', text: 'Password must be at least 6 characters long' })
+      return
+    }
+    
+    try {
+      await authApi.changePassword(changePasswordData.currentPassword, changePasswordData.newPassword)
+      setMessage({ type: 'success', text: 'Password changed successfully' })
+      setChangePasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' })
+      setShowChangePassword(false)
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Failed to change password' })
     }
   }
 
@@ -345,8 +458,8 @@ export default function SettingsPage() {
     })
   }, [config?.links, config?.areas, searchLink])
 
-  // Password screen
-  if (!isAuthenticated) {
+  // Password screen - only render after client hydration
+  if (!isClient || !isAuthenticated) {
     return (
       <div className="flex items-center justify-center h-full bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
         <Card className="w-full max-w-md mx-4">
@@ -364,12 +477,12 @@ export default function SettingsPage() {
                 <div className="relative">
                   <Input
                     id="password"
-                    type={showPassword ? 'text' : 'password'}
+                    type={isClient && showPassword ? 'text' : 'password'}
                     value={passwordInput}
                     onChange={(e) => setPasswordInput(e.target.value)}
                     placeholder="Enter password"
-                    className={authError ? 'border-red-500' : ''}
-                    autoFocus
+                    className={isClient && authError ? 'border-red-500' : ''}
+                    autoFocus={isClient}
                   />
                   <button
                     type="button"
@@ -414,25 +527,33 @@ export default function SettingsPage() {
 
   return (
     <div className="h-full overflow-auto p-4 lg:p-6">
-      {/* Header with auto-save status */}
+      {/* Header */}
       <div className="mb-4 lg:mb-6">
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-2xl lg:text-3xl font-bold mb-1 lg:mb-2">Settings</h1>
             <p className="text-sm lg:text-base text-muted-foreground">Configure your network monitoring</p>
+            {sessionExpiresAt && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Session expires: {sessionExpiresAt.toLocaleString()}
+              </p>
+            )}
           </div>
-          <div className="flex items-center gap-2 text-sm">
-            {autoSaving && (
-              <Badge variant="secondary" className="animate-pulse">
-                Saving...
-              </Badge>
-            )}
-            {lastSaved && !autoSaving && (
-              <Badge variant="outline" className="text-green-600 border-green-200">
-                <Check className="w-3 h-3 mr-1" />
-                Saved {new Date(lastSaved).toLocaleTimeString()}
-              </Badge>
-            )}
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={() => setShowChangePassword(true)}
+              variant="outline"
+              size="sm"
+            >
+              Change Password
+            </Button>
+            <Button
+              onClick={handleLogout}
+              variant="outline"
+              size="sm"
+            >
+              Logout
+            </Button>
           </div>
         </div>
       </div>
@@ -559,16 +680,35 @@ export default function SettingsPage() {
               return (
                 <div key={area.id} className="border rounded-md overflow-hidden">
                   {/* Area Header */}
-                  <button
-                    onClick={() => toggleAreaExpansion(area.id)}
-                    className="w-full flex items-center justify-between p-3 hover:bg-accent/50 transition-colors"
-                  >
-                    <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-between p-3 hover:bg-accent/50 transition-colors">
+                    <button
+                      onClick={() => toggleAreaExpansion(area.id)}
+                      className="flex items-center gap-2 flex-1"
+                    >
                       {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
                       <span className="font-medium">{area.name}</span>
                       <Badge variant="secondary" className="text-xs">{devicesInArea.length} devices</Badge>
-                    </div>
-                  </button>
+                    </button>
+                    <Button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        const newDevice: Device = {
+                          id: '',
+                          areaId: area.id,
+                          name: '',
+                          type: 'router',
+                          ip: ''
+                        }
+                        openDeviceModal(newDevice)
+                      }}
+                      size="sm"
+                      variant="outline"
+                      className="ml-2 shrink-0"
+                    >
+                      <Plus className="w-3 h-3 mr-1" />
+                      Add device for {area.name}
+                    </Button>
+                  </div>
 
                   {/* Devices List */}
                   {isExpanded && (
@@ -905,6 +1045,80 @@ export default function SettingsPage() {
           }}
         />
       )}
+
+      {/* Floating Auto-save Notification */}
+      {(autoSaving || (lastSaved && !autoSaving)) && (
+        <div className="fixed bottom-4 right-4 z-[9999] transform transition-all duration-300 ease-in-out">
+          {autoSaving && (
+            <div className="bg-blue-500 text-white px-4 py-3 rounded-lg shadow-xl flex items-center gap-2 animate-pulse border border-blue-400">
+              <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+              <span className="text-sm font-medium">Auto-saving...</span>
+            </div>
+          )}
+          {lastSaved && !autoSaving && (
+            <div className="bg-green-500 text-white px-4 py-3 rounded-lg shadow-xl flex items-center gap-2 transform transition-all duration-300 ease-in-out border border-green-400">
+              <Check className="w-4 h-4" />
+              <span className="text-sm font-medium">Saved {new Date(lastSaved).toLocaleTimeString()}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Change Password Modal */}
+      {showChangePassword && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowChangePassword(false)}>
+          <Card className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <CardHeader>
+              <CardTitle>Change Password</CardTitle>
+              <CardDescription>Update your settings password</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleChangePassword} className="space-y-4">
+                <div>
+                  <Label htmlFor="current-password">Current Password *</Label>
+                  <Input
+                    id="current-password"
+                    type="password"
+                    value={changePasswordData.currentPassword}
+                    onChange={(e) => setChangePasswordData({ ...changePasswordData, currentPassword: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="new-password">New Password *</Label>
+                  <Input
+                    id="new-password"
+                    type="password"
+                    value={changePasswordData.newPassword}
+                    onChange={(e) => setChangePasswordData({ ...changePasswordData, newPassword: e.target.value })}
+                    required
+                    minLength={6}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">Password must be at least 6 characters long</p>
+                </div>
+                <div>
+                  <Label htmlFor="confirm-password">Confirm New Password *</Label>
+                  <Input
+                    id="confirm-password"
+                    type="password"
+                    value={changePasswordData.confirmPassword}
+                    onChange={(e) => setChangePasswordData({ ...changePasswordData, confirmPassword: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="flex gap-2 justify-end pt-4">
+                  <Button type="button" variant="outline" onClick={() => setShowChangePassword(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit">
+                    Change Password
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   )
 }
@@ -918,10 +1132,40 @@ function AreaModal({ area, onSave, onClose }: { area: Area | null, onSave: (area
     lat: 14.5995,
     lng: 120.9842
   })
+  const [coordinatesInput, setCoordinatesInput] = useState(area ? `${area.lat}, ${area.lng}` : '')
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     onSave(formData)
+  }
+
+  const handleCoordinatesPaste = (value: string) => {
+    setCoordinatesInput(value)
+    
+    // Parse coordinates from format "lat, lng" or "lat,lng"
+    const parts = value.split(',').map(part => part.trim())
+    if (parts.length === 2) {
+      const lat = parseFloat(parts[0])
+      const lng = parseFloat(parts[1])
+      
+      if (!isNaN(lat) && !isNaN(lng)) {
+        setFormData(prev => ({ ...prev, lat, lng }))
+      }
+    }
+  }
+
+  const handleLatChange = (value: number) => {
+    setFormData(prev => {
+      setCoordinatesInput(`${value}, ${prev.lng}`)
+      return { ...prev, lat: value }
+    })
+  }
+
+  const handleLngChange = (value: number) => {
+    setFormData(prev => {
+      setCoordinatesInput(`${prev.lat}, ${value}`)
+      return { ...prev, lng: value }
+    })
   }
 
   return (
@@ -941,7 +1185,6 @@ function AreaModal({ area, onSave, onClose }: { area: Area | null, onSave: (area
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 placeholder="e.g., Main Office"
                 required
-                autoFocus
               />
             </div>
             
@@ -960,6 +1203,20 @@ function AreaModal({ area, onSave, onClose }: { area: Area | null, onSave: (area
               </select>
             </div>
 
+            <div>
+              <Label htmlFor="coordinates">Coordinates (Quick Paste) *</Label>
+              <Input
+                id="coordinates"
+                value={coordinatesInput}
+                onChange={(e) => handleCoordinatesPaste(e.target.value)}
+                placeholder="e.g., 6.514039071296758, 124.64302483013414"
+                required
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Paste coordinates in format: latitude, longitude
+              </p>
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="area-lat">Latitude *</Label>
@@ -968,7 +1225,7 @@ function AreaModal({ area, onSave, onClose }: { area: Area | null, onSave: (area
                   type="number"
                   step="0.0001"
                   value={formData.lat}
-                  onChange={(e) => setFormData({ ...formData, lat: parseFloat(e.target.value) || 0 })}
+                  onChange={(e) => handleLatChange(parseFloat(e.target.value) || 0)}
                   required
                 />
               </div>
@@ -979,7 +1236,7 @@ function AreaModal({ area, onSave, onClose }: { area: Area | null, onSave: (area
                   type="number"
                   step="0.0001"
                   value={formData.lng}
-                  onChange={(e) => setFormData({ ...formData, lng: parseFloat(e.target.value) || 0 })}
+                  onChange={(e) => handleLngChange(parseFloat(e.target.value) || 0)}
                   required
                 />
               </div>
@@ -1033,7 +1290,6 @@ function DeviceModal({ device, areas, onSave, onClose }: { device: Device | null
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 placeholder="e.g., Main Router"
                 required
-                autoFocus
               />
             </div>
             

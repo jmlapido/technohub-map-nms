@@ -30,18 +30,123 @@ function getApiBaseUrl(): string {
 
 const API_BASE = getApiBaseUrl()
 
+// Authentication token management
+let authToken: string | null = null
+let tokenExpiry: Date | null = null
+
+// API call throttling to prevent spam
+let lastApiCall: { [key: string]: number } = {}
+const API_THROTTLE_MS = 5000 // Minimum 5 seconds between identical API calls
+
+// Check if token is valid and not expired
+function isTokenValid(): boolean {
+  if (!authToken || !tokenExpiry) {
+    console.log('Token validation failed: no token or expiry')
+    return false
+  }
+  const isValid = new Date() < tokenExpiry
+  console.log('Token validation:', { isValid, tokenExpiry, now: new Date() })
+  return isValid
+}
+
+// Set authentication token
+export function setAuthToken(token: string, expiresAt: string) {
+  authToken = token
+  tokenExpiry = new Date(expiresAt)
+  
+  // Store in localStorage for persistence across page reloads
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('authToken', token)
+    localStorage.setItem('authTokenExpiry', expiresAt)
+  }
+}
+
+// Clear authentication token
+export function clearAuthToken() {
+  authToken = null
+  tokenExpiry = null
+  
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('authToken')
+    localStorage.removeItem('authTokenExpiry')
+  }
+}
+
+// Get current authentication status
+export function getAuthStatus(): { isAuthenticated: boolean, tokenExpiry: Date | null } {
+  return {
+    isAuthenticated: isTokenValid(),
+    tokenExpiry: tokenExpiry
+  }
+}
+
+// Initialize token from localStorage on client side
+if (typeof window !== 'undefined') {
+  const storedToken = localStorage.getItem('authToken')
+  const storedExpiry = localStorage.getItem('authTokenExpiry')
+  
+  if (storedToken && storedExpiry) {
+    const expiryDate = new Date(storedExpiry)
+    if (expiryDate > new Date()) {
+      authToken = storedToken
+      tokenExpiry = expiryDate
+      console.log('Token initialized from localStorage:', { hasToken: !!authToken, expiry: tokenExpiry })
+    } else {
+      // Token expired, clear it
+      console.log('Token expired, clearing from localStorage')
+      localStorage.removeItem('authToken')
+      localStorage.removeItem('authTokenExpiry')
+    }
+  } else {
+    console.log('No token found in localStorage')
+  }
+}
+
 export const api = axios.create({
   baseURL: API_BASE,
-  timeout: 30000, // Increased from 10s to 30s for better stability
+  timeout: 10000, // 10 seconds timeout
   headers: {
     'Cache-Control': 'no-cache',
     'Pragma': 'no-cache'
   }
 })
 
-// Add request interceptor for debugging
+// Add request interceptor for debugging and authentication
 api.interceptors.request.use((config) => {
+  const requestKey = `${config.method?.toUpperCase()}_${config.url}`
+  const now = Date.now()
+  
+  // Don't throttle critical requests or POST requests to config (auto-save)
+  const isCriticalRequest = config.url?.includes('/api/status')
+  const isPostConfig = config.method?.toUpperCase() === 'POST' && config.url?.includes('/api/config')
+  const isGetConfig = config.method?.toUpperCase() === 'GET' && config.url?.includes('/api/config')
+  
+  // Only throttle if it's not a critical request, not a POST config request, and not a GET config request
+  if (!isCriticalRequest && !isPostConfig && !isGetConfig && lastApiCall[requestKey] && (now - lastApiCall[requestKey]) < API_THROTTLE_MS) {
+    console.log(`API Request throttled: ${requestKey}`)
+    return Promise.reject(new Error('Request throttled'))
+  }
+  
+  // Only track requests that we might want to throttle in the future
+  if (!isCriticalRequest && !isPostConfig && !isGetConfig) {
+    lastApiCall[requestKey] = now
+  }
+  
   console.log(`API Request: ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`)
+  
+  // Add authentication token to protected routes
+  const needsAuth = config.url?.includes('/api/config') || config.url?.includes('/api/export') || config.url?.includes('/api/import') || config.url?.includes('/api/auth/change-password')
+  if (needsAuth) {
+    const tokenValid = isTokenValid()
+    console.log(`Auth needed for ${config.url}:`, { tokenValid, hasToken: !!authToken })
+    if (tokenValid) {
+      config.headers.Authorization = `Bearer ${authToken}`
+      console.log('Added auth header')
+    } else {
+      console.log('No valid token, request will likely fail')
+    }
+  }
+  
   return config
 })
 
@@ -52,15 +157,35 @@ api.interceptors.response.use(
     const config = error.config
     
     console.error('API Error:', error.message)
+    
+    // Handle throttled requests - don't retry these or treat as auth failure
+    if (error.message === 'Request throttled') {
+      console.log('Request was throttled, not an authentication issue')
+      return Promise.reject(error)
+    }
+    
+    // Handle authentication errors
+    if (error.response?.status === 401) {
+      console.log('Authentication failed, clearing token')
+      clearAuthToken()
+      
+      // Dispatch custom event for authentication failure
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('auth-failed'))
+      }
+      
+      return Promise.reject(error)
+    }
+    
     if (error.code === 'ECONNABORTED') {
       console.error('Request timeout - backend may not be responding')
     }
     
-    // Retry logic for failed requests (server errors and timeouts)
-    if (!config._retry && (error.response?.status >= 500 || error.code === 'ECONNABORTED' || error.code === 'ECONNREFUSED')) {
+    // Retry logic for failed requests (server errors and timeouts) - limit to 1 retry
+    if (config && !config._retry && (error.response?.status >= 500 || error.code === 'ECONNABORTED' || error.code === 'ECONNREFUSED')) {
       config._retry = true
       console.log('Retrying request after error...')
-      await new Promise(resolve => setTimeout(resolve, 2000)) // Wait 2s before retry
+      await new Promise(resolve => setTimeout(resolve, 1000)) // Wait 1s before retry
       return api(config)
     }
     
@@ -149,6 +274,11 @@ export const networkApi = {
     return data
   },
   
+  getPublicConfig: async (): Promise<Pick<Config, 'areas' | 'links' | 'devices'>> => {
+    const { data } = await api.get('/api/config/public')
+    return data
+  },
+  
   updateConfig: async (config: Partial<Config>): Promise<void> => {
     await api.post('/api/config', config)
   },
@@ -170,6 +300,34 @@ export const networkApi = {
       }
     })
     
+    return data
+  }
+}
+
+export const authApi = {
+  login: async (password: string): Promise<{ token: string, expiresAt: string }> => {
+    const { data } = await api.post('/api/auth/login', { password })
+    return data
+  },
+  
+  logout: async (): Promise<void> => {
+    try {
+      await api.post('/api/auth/logout')
+    } catch (error) {
+      // Ignore errors on logout
+    }
+    clearAuthToken()
+  },
+  
+  changePassword: async (currentPassword: string, newPassword: string): Promise<void> => {
+    await api.post('/api/auth/change-password', {
+      currentPassword,
+      newPassword
+    })
+  },
+  
+  getAuthStatus: async (): Promise<{ authenticated: boolean, sessionExpiresAt: string }> => {
+    const { data } = await api.get('/api/auth/status')
     return data
   }
 }

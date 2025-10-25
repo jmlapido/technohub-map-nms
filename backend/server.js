@@ -3,7 +3,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const { initDatabase } = require('./database');
-const { startMonitoring } = require('./monitor');
+const { startMonitoring } = require('./monitor.js');
 const archiver = require('archiver');
 const multer = require('multer');
 const extract = require('extract-zip');
@@ -12,11 +12,24 @@ const app = express();
 const PORT = process.env.BACKEND_PORT || 5000;
 
 // Middleware - CORS configuration to allow all origins
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cache-Control, Pragma');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
+
 app.use(cors({
   origin: true, // Allow all origins
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Cache-Control', 'Pragma']
 }));
 app.use(express.json());
 
@@ -36,6 +49,175 @@ let config = loadConfig(configPath);
 // Start monitoring
 startMonitoring(config);
 
+// Authentication system
+const crypto = require('crypto');
+const sessions = new Map(); // In-memory session store (in production, use Redis or database)
+
+// Session persistence
+const sessionsPath = path.join(__dirname, 'data', 'sessions.json');
+
+// Load sessions from file
+function loadSessions() {
+  try {
+    if (fs.existsSync(sessionsPath)) {
+      const sessionsData = JSON.parse(fs.readFileSync(sessionsPath, 'utf8'));
+      for (const [token, sessionData] of Object.entries(sessionsData)) {
+        // Only load sessions that are still valid
+        if (isSessionValid(sessionData)) {
+          sessions.set(token, sessionData);
+        }
+      }
+      console.log(`Loaded ${sessions.size} valid sessions`);
+    }
+  } catch (error) {
+    console.error('Error loading sessions:', error);
+  }
+}
+
+// Save sessions to file
+function saveSessions() {
+  try {
+    const sessionsData = Object.fromEntries(sessions);
+    fs.writeFileSync(sessionsPath, JSON.stringify(sessionsData, null, 2));
+  } catch (error) {
+    console.error('Error saving sessions:', error);
+  }
+}
+
+// Load sessions on startup
+loadSessions();
+
+// Default password configuration
+const authConfigPath = path.join(__dirname, 'data', 'auth.json');
+let authConfig = {
+  password: 'admin123', // Default password - should be changed
+  lastChanged: new Date().toISOString()
+};
+
+// Load or create auth config
+try {
+  if (fs.existsSync(authConfigPath)) {
+    authConfig = JSON.parse(fs.readFileSync(authConfigPath, 'utf8'));
+  } else {
+    fs.writeFileSync(authConfigPath, JSON.stringify(authConfig, null, 2));
+  }
+} catch (error) {
+  console.error('Error loading auth config:', error);
+}
+
+// Generate session token
+function generateSessionToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+// Check if session is valid (24 hours)
+function isSessionValid(sessionData) {
+  const now = Date.now();
+  const sessionAge = now - sessionData.createdAt;
+  const maxAge = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+  return sessionAge < maxAge;
+}
+
+// Middleware to check authentication
+function requireAuth(req, res, next) {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  
+  console.log(`Auth check for ${req.method} ${req.path}:`, {
+    hasToken: !!token,
+    tokenLength: token?.length || 0,
+    sessionCount: sessions.size
+  });
+  
+  if (!token) {
+    console.log('No token provided');
+    return res.status(401).json({ error: 'No authentication token provided' });
+  }
+  
+  const sessionData = sessions.get(token);
+  
+  if (!sessionData) {
+    console.log('No session data found for token');
+    return res.status(401).json({ error: 'Invalid or expired session' });
+  }
+  
+  if (!isSessionValid(sessionData)) {
+    console.log('Session expired, removing token');
+    sessions.delete(token);
+    saveSessions(); // Save sessions to file
+    return res.status(401).json({ error: 'Invalid or expired session' });
+  }
+  
+  console.log('Authentication successful');
+  req.session = sessionData;
+  next();
+}
+
+// Authentication routes
+app.post('/api/auth/login', (req, res) => {
+  const { password } = req.body;
+  
+  if (!password || password !== authConfig.password) {
+    return res.status(401).json({ error: 'Invalid password' });
+  }
+  
+  const token = generateSessionToken();
+  const sessionData = {
+    token,
+    createdAt: Date.now(),
+    lastActivity: Date.now()
+  };
+  
+  sessions.set(token, sessionData);
+  saveSessions(); // Save sessions to file
+  
+  res.json({ 
+    token,
+    expiresAt: new Date(sessionData.createdAt + (24 * 60 * 60 * 1000)).toISOString()
+  });
+});
+
+app.post('/api/auth/change-password', requireAuth, (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Current password and new password are required' });
+  }
+  
+  if (currentPassword !== authConfig.password) {
+    return res.status(401).json({ error: 'Current password is incorrect' });
+  }
+  
+  if (newPassword.length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters long' });
+  }
+  
+  authConfig.password = newPassword;
+  authConfig.lastChanged = new Date().toISOString();
+  
+  try {
+    fs.writeFileSync(authConfigPath, JSON.stringify(authConfig, null, 2));
+    res.json({ message: 'Password changed successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to save password' });
+  }
+});
+
+app.post('/api/auth/logout', requireAuth, (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (token) {
+    sessions.delete(token);
+    saveSessions(); // Save sessions to file
+  }
+  res.json({ message: 'Logged out successfully' });
+});
+
+app.get('/api/auth/status', requireAuth, (req, res) => {
+  res.json({ 
+    authenticated: true,
+    sessionExpiresAt: new Date(req.session.createdAt + (24 * 60 * 60 * 1000)).toISOString()
+  });
+});
+
 // Routes
 app.get('/api/status', (req, res) => {
   const { getCurrentStatus } = require('./database');
@@ -50,18 +232,29 @@ app.get('/api/history/:deviceId', (req, res) => {
   res.json(history);
 });
 
-app.get('/api/config', (req, res) => {
+// Public config endpoint for basic data (no authentication required)
+app.get('/api/config/public', (req, res) => {
+  // Return only the basic config needed for the map display
+  const publicConfig = {
+    areas: config.areas,
+    links: config.links,
+    devices: config.devices
+  };
+  res.json(publicConfig);
+});
+
+app.get('/api/config', requireAuth, (req, res) => {
   res.json(config);
 });
 
-app.post('/api/config', (req, res) => {
+app.post('/api/config', requireAuth, (req, res) => {
   try {
     const newConfig = req.body;
     saveConfig(newConfig);
     config = newConfig;
     
     // Restart monitoring with new config
-    const { stopMonitoring } = require('./monitor');
+    const { stopMonitoring } = require('./monitor.js');
     stopMonitoring();
     startMonitoring(config);
     
@@ -76,7 +269,7 @@ app.post('/api/config', (req, res) => {
 const upload = multer({ dest: path.join(__dirname, 'data', 'temp') });
 
 // Export database and config
-app.get('/api/export', (req, res) => {
+app.get('/api/export', requireAuth, (req, res) => {
   try {
     const dataDir = path.join(__dirname, 'data');
     const dbPath = path.join(dataDir, 'database.sqlite');
@@ -123,7 +316,7 @@ app.get('/api/export', (req, res) => {
 });
 
 // Import database and config
-app.post('/api/import', upload.single('backup'), async (req, res) => {
+app.post('/api/import', requireAuth, upload.single('backup'), async (req, res) => {
   const tempDir = path.join(__dirname, 'data', 'temp');
   const extractDir = path.join(tempDir, 'extract');
   
@@ -151,7 +344,7 @@ app.post('/api/import', upload.single('backup'), async (req, res) => {
     }
     
     // Stop monitoring before importing
-    const { stopMonitoring } = require('./monitor');
+    const { stopMonitoring } = require('./monitor.js');
     stopMonitoring();
     
     // Backup current files

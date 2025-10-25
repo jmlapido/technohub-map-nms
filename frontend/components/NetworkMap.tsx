@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -30,6 +30,8 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
   const [mapView, setMapView] = useState<'street' | 'satellite'>('street')
   const [focusedAreaId, setFocusedAreaId] = useState<string | null>(null)
   const [hasInitiallyCentered, setHasInitiallyCentered] = useState(false)
+  const [visibleCategories, setVisibleCategories] = useState<Set<string>>(new Set())
+  const [hasInitializedCategories, setHasInitializedCategories] = useState(false)
   const mapRef = useRef<L.Map>(null)
 
   // Calculate initial bounds from all areas
@@ -117,14 +119,32 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
     return `${seconds}s`
   }
 
-  // Focus on a specific area
-  const focusOnArea = (areaId: string) => {
+  // Toggle category visibility
+  const toggleCategoryVisibility = (categoryType: string) => {
+    setVisibleCategories(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(categoryType)) {
+        newSet.delete(categoryType)
+      } else {
+        newSet.add(categoryType)
+      }
+      return newSet
+    })
+  }
+
+  // Focus on a specific area and show details
+  const focusOnArea = (areaId: string, areaStatus?: AreaStatus) => {
     const area = config.areas.find(a => a.id === areaId)
     if (area && mapRef.current) {
       mapRef.current.flyTo([area.lat, area.lng], 17, {
         duration: 1.5
       })
       setFocusedAreaId(areaId)
+      
+      // Show area details panel if areaStatus is provided
+      if (areaStatus) {
+        setSelectedArea(areaStatus)
+      }
       
       // Clear focus highlight after animation
       setTimeout(() => {
@@ -143,6 +163,21 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
     }
   }
 
+  // Auto-adjust map bounds when panel is maximized
+  useEffect(() => {
+    if (statusPanelMaximized && bounds && mapRef.current) {
+      // Small delay to ensure panel animation completes
+      setTimeout(() => {
+        if (mapRef.current) {
+          mapRef.current.fitBounds(bounds, { 
+            padding: [120, 80], // Increased top padding for maximized panel
+            maxZoom: 15
+          })
+        }
+      }, 300)
+    }
+  }, [statusPanelMaximized, bounds])
+
   // Calculate statistics
   const totalDevices = status.areas.reduce((sum, area) => sum + area.devices.length, 0)
   const onlineDevices = status.areas.reduce((sum, area) => 
@@ -150,18 +185,30 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
   )
   const offlineDevices = totalDevices - onlineDevices
 
-  // Group areas by type
-  const groupedAreas = status.areas.reduce((acc, area) => {
-    const areaInfo = config.areas.find(a => a.id === area.areaId)
-    if (!areaInfo) return acc
+  // Group areas by type - memoized to prevent unnecessary recalculations
+  const groupedAreas = useMemo(() => {
+    return status.areas.reduce((acc, area) => {
+      const areaInfo = config.areas.find(a => a.id === area.areaId)
+      if (!areaInfo) return acc
+      
+      const type = areaInfo.type || 'Other'
+      if (!acc[type]) {
+        acc[type] = []
+      }
+      acc[type].push({ ...area, areaInfo })
+      return acc
+    }, {} as Record<string, any[]>)
+  }, [status.areas, config.areas])
+
+  // Initialize visible categories with all available types (only once)
+  useEffect(() => {
+    const allTypes = Object.keys(groupedAreas)
     
-    const type = areaInfo.type || 'Other'
-    if (!acc[type]) {
-      acc[type] = []
+    if (allTypes.length > 0 && !hasInitializedCategories) {
+      setVisibleCategories(new Set(allTypes))
+      setHasInitializedCategories(true)
     }
-    acc[type].push({ ...area, areaInfo })
-    return acc
-  }, {} as Record<string, any[]>)
+  }, [groupedAreas, hasInitializedCategories])
 
   // Create a map of area statuses
   const areaStatusMap = new Map(status.areas.map(a => [a.areaId, a]))
@@ -283,8 +330,12 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
         {/* Draw area markers */}
         {config.areas.map(area => {
           const areaStatus = areaStatusMap.get(area.id)
-          const statusColor = areaStatus ? getStatusColor(areaStatus.status) : '#6b7280'
           const areaType = area.type || 'Other'
+          
+          // Skip rendering if category is hidden
+          if (!visibleCategories.has(areaType)) return null
+          
+          const statusColor = areaStatus ? getStatusColor(areaStatus.status) : '#6b7280'
           const isFocused = focusedAreaId === area.id
           const customIcon = createCustomIcon(statusColor, areaType, isFocused)
 
@@ -433,23 +484,32 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
         {/* Top Bar - Always Visible */}
         <div className="px-3 lg:px-4 py-2 lg:py-2.5 border-b border-border">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-3 lg:gap-4 flex-wrap">
-              {Object.entries(groupedAreas).map(([type, areas], idx) => {
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {Object.entries(groupedAreas).map(([type, areas]) => {
                 const onlineCount = areas.reduce((sum, area) => 
                   sum + area.devices.filter((d: DeviceStatus) => d.status === 'up').length, 0
                 )
                 const totalCount = areas.reduce((sum, area) => sum + area.devices.length, 0)
+                const isVisible = visibleCategories.has(type)
                 
                 return (
-                  <div key={type} className="flex items-center gap-2">
-                    {idx > 0 && <span className="text-muted-foreground">|</span>}
+                  <button
+                    key={type}
+                    onClick={() => toggleCategoryVisibility(type)}
+                    className={`flex items-center gap-1.5 px-2 py-1 rounded-md transition-colors ${
+                      isVisible 
+                        ? 'bg-muted/50 hover:bg-muted/70' 
+                        : 'bg-muted/20 hover:bg-muted/40 opacity-60'
+                    }`}
+                    title={`Click to ${isVisible ? 'hide' : 'show'} ${type} on map`}
+                  >
                     {getAreaTypeIcon(type)}
                     <span className="text-xs lg:text-sm font-medium">
                       {type}{' '}
                       <span className="text-green-600 font-semibold">{onlineCount}</span>
                       <span className="text-muted-foreground">/{totalCount}</span>
                     </span>
-                  </div>
+                  </button>
                 )
               })}
             </div>
@@ -493,7 +553,7 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
                     {getAreaTypeIcon(type)}
                     <span className="text-xs lg:text-sm font-semibold">{type}</span>
                   </div>
-                  <div className="flex flex-wrap gap-2 lg:gap-3 ml-5">
+                  <div className="flex flex-wrap gap-1 lg:gap-1.5 ml-5">
                     {areas.map(area => {
                       const onlineCount = area.devices.filter((d: DeviceStatus) => d.status === 'up').length
                       const totalCount = area.devices.length
@@ -509,10 +569,10 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
                       return (
                         <button
                           key={area.areaId}
-                          onClick={() => focusOnArea(area.areaId)}
-                          className="flex items-center gap-1.5 hover:bg-muted px-2 py-1 rounded transition-colors cursor-pointer"
+                          onClick={() => focusOnArea(area.areaId, area)}
+                          className="flex items-center gap-1 hover:bg-muted px-1.5 py-0.5 rounded transition-colors cursor-pointer"
                         >
-                          <div className={`w-2 h-2 rounded-full ${dotColor}`}></div>
+                          <div className={`w-1.5 h-1.5 rounded-full ${dotColor}`}></div>
                           <span className="text-xs lg:text-sm font-medium">
                             {area.areaInfo?.name}
                           </span>

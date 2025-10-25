@@ -23,35 +23,30 @@ export default function Home() {
   const [config, setConfig] = useState<Config | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [retryCount, setRetryCount] = useState(0)
 
   useEffect(() => {
     loadData()
     
-    // Dynamic interval based on retry count with exponential backoff
-    const baseInterval = 10000
-    const retryInterval = Math.min(baseInterval * Math.pow(1.5, retryCount), 60000) // Max 60s
-    
-    const interval = setInterval(loadData, retryInterval)
+    // Fixed interval - no need to recreate on every retry
+    const interval = setInterval(loadData, 15000) // 15 seconds to reduce load
     return () => clearInterval(interval)
-  }, [retryCount])
+  }, []) // Empty dependency array - only run once on mount
 
   const loadData = async () => {
     try {
+      // Load both status and public config data
       const [statusData, configData] = await Promise.all([
         networkApi.getStatus(),
-        networkApi.getConfig()
+        networkApi.getPublicConfig()
       ])
       setStatus(statusData)
-      setConfig(configData)
+      setConfig(configData as Config) // Cast to Config type
       setLoading(false)
       setError(null)
-      setRetryCount(0) // Reset retry count on success
     } catch (err) {
       console.error('Failed to load data:', err)
       setError('Connection lost. Retrying...')
       setLoading(false)
-      setRetryCount(prev => prev + 1)
     }
   }
 
