@@ -54,6 +54,15 @@ app.get('/api/config', (req, res) => {
   res.json(config);
 });
 
+app.get('/api/config/public', (req, res) => {
+  // Return only public config (areas, links, devices) without settings or sensitive data
+  res.json({
+    areas: config.areas || [],
+    links: config.links || [],
+    devices: config.devices || []
+  });
+});
+
 app.post('/api/config', (req, res) => {
   try {
     const newConfig = req.body;
