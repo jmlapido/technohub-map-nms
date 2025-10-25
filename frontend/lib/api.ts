@@ -260,9 +260,7 @@ export interface Config {
 
 export const networkApi = {
   getStatus: async (): Promise<NetworkStatus> => {
-    console.log('Calling getStatus from API_BASE:', API_BASE)
     const { data } = await api.get('/api/status')
-    console.log('Received status data:', data)
     return data
   },
   
@@ -277,9 +275,7 @@ export const networkApi = {
   },
   
   getPublicConfig: async (): Promise<Pick<Config, 'areas' | 'links' | 'devices'>> => {
-    console.log('Calling getPublicConfig from API_BASE:', API_BASE)
     const { data } = await api.get('/api/config/public')
-    console.log('Received config data:', data)
     return data
   },
   
