@@ -9,7 +9,7 @@ import { Activity, Wifi, WifiOff, AlertTriangle, CheckCircle2, XCircle, Home, Sh
 
 export default function StatusPage() {
   const [status, setStatus] = useState<NetworkStatus | null>(null)
-  const [config, setConfig] = useState<Config | null>(null)
+  const [config, setConfig] = useState<Pick<Config, 'areas' | 'links' | 'devices'> | null>(null)
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'up' | 'down' | 'degraded'>('all')
