@@ -292,6 +292,72 @@ app.post('/api/import', upload.single('backup'), async (req, res) => {
   }
 });
 
+// Authentication routes
+app.post('/api/auth/login', (req, res) => {
+  try {
+    const { password } = req.body;
+    const authPath = path.join(__dirname, 'data', 'auth.json');
+    
+    if (!fs.existsSync(authPath)) {
+      return res.status(401).json({ error: 'Authentication not configured' });
+    }
+    
+    const authData = JSON.parse(fs.readFileSync(authPath, 'utf8'));
+    
+    if (password === authData.password) {
+      const token = 'auth-token-' + Date.now(); // Simple token for now
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+      
+      res.json({ token, expiresAt: expiresAt.toISOString() });
+    } else {
+      res.status(401).json({ error: 'Invalid password' });
+    }
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Authentication failed' });
+  }
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  res.json({ success: true });
+});
+
+app.get('/api/auth/status', (req, res) => {
+  res.json({ authenticated: false }); // Simple implementation - always false for now
+});
+
+app.post('/api/auth/change-password', (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const authPath = path.join(__dirname, 'data', 'auth.json');
+    
+    if (!fs.existsSync(authPath)) {
+      return res.status(401).json({ error: 'Authentication not configured' });
+    }
+    
+    const authData = JSON.parse(fs.readFileSync(authPath, 'utf8'));
+    
+    if (currentPassword === authData.password) {
+      if (newPassword.length < 6) {
+        return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+      }
+      
+      const newAuthData = {
+        password: newPassword,
+        lastChanged: new Date().toISOString()
+      };
+      
+      fs.writeFileSync(authPath, JSON.stringify(newAuthData, null, 2));
+      res.json({ success: true });
+    } else {
+      res.status(401).json({ error: 'Current password is incorrect' });
+    }
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Backend server running on port ${PORT}`);
   console.log(`API available at http://localhost:${PORT}/api`);
