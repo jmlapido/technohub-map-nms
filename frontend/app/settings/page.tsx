@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { networkApi, authApi, setAuthToken, clearAuthToken, getAuthStatus, type Config, type Area, type Device, type Link } from '@/lib/api'
+import { networkApi, authApi, setAuthToken, getAuthStatus, type Config, type Area, type Device, type Link, type LinkEndpoint, type LinkConnectionType, type TopologySettings } from '@/lib/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -46,28 +46,45 @@ export default function SettingsPage() {
   const [editingArea, setEditingArea] = useState<Area | null>(null)
   const [editingDevice, setEditingDevice] = useState<Device | null>(null)
   const [editingLink, setEditingLink] = useState<Link | null>(null)
+  const [linkDraft, setLinkDraft] = useState<Link | null>(null)
   
   // Export/Import states
   const [isExporting, setIsExporting] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
 
-  useEffect(() => {
-    setIsClient(true)
-    checkAuthStatus()
-  }, [])
+  const areaMap = useMemo(() => {
+    if (!config) return new Map<string, Area>()
+    return new Map(config.areas.map(area => [area.id, area] as [string, Area]))
+  }, [config])
 
-  // Listen for authentication failures
-  useEffect(() => {
-    const handleAuthFailed = () => {
-      setIsAuthenticated(false)
-      setSessionExpiresAt(null)
+  const deviceMap = useMemo(() => {
+    if (!config) return new Map<string, Device>()
+    return new Map(config.devices.map(device => [device.id, device] as [string, Device]))
+  }, [config])
+
+  const connectionTypeOptions = useMemo(
+    () => [
+      { value: 'wireless' as LinkConnectionType, label: 'Wireless / Backhaul' },
+      { value: 'lan' as LinkConnectionType, label: 'LAN / Ethernet' },
+      { value: 'fiber' as LinkConnectionType, label: 'Fiber' },
+      { value: 'backhaul' as LinkConnectionType, label: 'Dedicated Backhaul' },
+      { value: 'other' as LinkConnectionType, label: 'Other' }
+    ],
+    []
+  )
+
+  const loadConfig = useCallback(async () => {
+    try {
+      const data = await networkApi.getConfig()
+      setConfig(data)
+      setLoading(false)
+    } catch (error) {
+      console.error('Failed to load config:', error)
+      setLoading(false)
     }
-
-    window.addEventListener('auth-failed', handleAuthFailed)
-    return () => window.removeEventListener('auth-failed', handleAuthFailed)
   }, [])
 
-  const checkAuthStatus = async () => {
+  const checkAuthStatus = useCallback(async () => {
     try {
       // First check if we have a valid token locally
       const localAuthStatus = getAuthStatus()
@@ -87,23 +104,28 @@ export default function SettingsPage() {
       if (status.authenticated) {
         loadConfig()
       }
-    } catch (err) {
+    } catch {
       setIsAuthenticated(false)
       setSessionExpiresAt(null)
       setLoading(false)
     }
-  }
+  }, [loadConfig])
 
-  const loadConfig = async () => {
-    try {
-      const data = await networkApi.getConfig()
-      setConfig(data)
-      setLoading(false)
-    } catch (err) {
-      console.error('Failed to load config:', err)
-      setLoading(false)
+  useEffect(() => {
+    setIsClient(true)
+    checkAuthStatus()
+  }, [checkAuthStatus])
+
+  // Listen for authentication failures
+  useEffect(() => {
+    const handleAuthFailed = () => {
+      setIsAuthenticated(false)
+      setSessionExpiresAt(null)
     }
-  }
+
+    window.addEventListener('auth-failed', handleAuthFailed)
+    return () => window.removeEventListener('auth-failed', handleAuthFailed)
+  }, [])
 
   const autoSaveConfig = useCallback(async () => {
     if (!config || !isAuthenticated) {
@@ -115,27 +137,33 @@ export default function SettingsPage() {
     setAutoSaving(true)
     
     try {
-      await networkApi.updateConfig(config)
+      const response = await networkApi.updateConfig(config)
       console.log('Auto-save successful')
       setLastSaved(new Date())
-      setMessage({ type: 'success', text: '✓ Auto-saved' })
+      const invalidCount = response?.invalidLinksRemoved ?? 0
+      const successText = invalidCount > 0
+        ? `✓ Auto-saved (removed ${invalidCount} invalid link${invalidCount === 1 ? '' : 's'})`
+        : '✓ Auto-saved'
+      setMessage({ type: 'success', text: successText })
       setTimeout(() => setMessage(null), 2000)
-    } catch (err: any) {
-      console.error('Auto-save error:', err)
-      console.error('Error details:', {
-        message: err.message,
-        status: err.response?.status,
-        statusText: err.response?.statusText,
-        data: err.response?.data
-      })
+    } catch (error: unknown) {
+      const apiError = ((): { message: string; status?: number } => {
+        if (error && typeof error === 'object' && 'message' in error) {
+          const errObj = error as { message?: string; response?: { status?: number } }
+          return { message: errObj.message ?? 'Unknown error', status: errObj.response?.status }
+        }
+        return { message: 'Unknown error' }
+      })()
+
+      console.error('Auto-save error:', error)
       
       // Check if it's an authentication error
-      if (err.response?.status === 401) {
+      if (apiError.status === 401) {
         console.log('Authentication error detected, logging out')
         setMessage({ type: 'error', text: 'Session expired. Please log in again.' })
         setIsAuthenticated(false)
         setSessionExpiresAt(null)
-      } else if (err.message === 'Request throttled') {
+      } else if (apiError.message === 'Request throttled') {
         // Don't show error for throttled requests, just skip this save
         console.log('Auto-save skipped due to throttling')
       } else {
@@ -145,6 +173,22 @@ export default function SettingsPage() {
       setAutoSaving(false)
     }
   }, [config, isAuthenticated])
+
+  const updateTopologySetting = useCallback((key: keyof TopologySettings, value: boolean) => {
+    setConfig(prev => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        settings: {
+          ...prev.settings,
+          topology: {
+            ...prev.settings.topology,
+            [key]: value
+          }
+        }
+      }
+    })
+  }, [])
 
   // Auto-save effect with debounce
   useEffect(() => {
@@ -168,7 +212,7 @@ export default function SettingsPage() {
       setSessionExpiresAt(new Date(response.expiresAt))
       setPasswordInput('')
       loadConfig()
-    } catch (err) {
+    } catch {
       setAuthError(true)
       setPasswordInput('')
       setTimeout(() => setAuthError(false), 2000)
@@ -178,7 +222,7 @@ export default function SettingsPage() {
   const handleLogout = async () => {
     try {
       await authApi.logout()
-    } catch (err) {
+    } catch {
       // Ignore errors
     }
     setIsAuthenticated(false)
@@ -205,8 +249,11 @@ export default function SettingsPage() {
       setMessage({ type: 'success', text: 'Password changed successfully' })
       setChangePasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' })
       setShowChangePassword(false)
-    } catch (err: any) {
-      setMessage({ type: 'error', text: err.response?.data?.error || 'Failed to change password' })
+    } catch (error: unknown) {
+      const apiError = error && typeof error === 'object' && 'response' in error
+        ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
+        : undefined
+      setMessage({ type: 'error', text: apiError || 'Failed to change password' })
     }
   }
 
@@ -295,35 +342,163 @@ export default function SettingsPage() {
     setConfig({ ...config, devices: config.devices.filter(d => d.id !== id) })
   }
 
-  // Link CRUD
+  // Link helpers & CRUD
+  const getNormalizedEndpoints = useCallback((link: Link): [LinkEndpoint, LinkEndpoint] => {
+    const base: LinkEndpoint[] = Array.isArray(link?.endpoints)
+      ? link.endpoints.slice(0, 2) as LinkEndpoint[]
+      : []
+
+    while (base.length < 2) {
+      base.push({} as LinkEndpoint)
+    }
+
+    return base.map((endpoint, index) => {
+      const safeEndpoint = endpoint || ({} as LinkEndpoint)
+      const fallbackAreaId = index === 0 ? (link.from ?? null) : (link.to ?? null)
+
+      return {
+        areaId: safeEndpoint.areaId ?? fallbackAreaId ?? null,
+        deviceId: safeEndpoint.deviceId ?? null,
+        interface: safeEndpoint.interface ?? undefined,
+        interfaceType: safeEndpoint.interfaceType ?? link.type ?? undefined,
+        label: safeEndpoint.label ?? undefined
+      }
+    }) as [LinkEndpoint, LinkEndpoint]
+  }, [])
+
+  const prepareLinkForEditing = useCallback((link: Link | null): Link => {
+    const fallbackAreaA = config?.areas[0]?.id ?? null
+    const fallbackAreaB = config?.areas[1]?.id ?? fallbackAreaA
+    const baseType: LinkConnectionType | string = link?.type ?? 'wireless'
+    const baseLabel = link?.label
+    const baseMetadata = link?.metadata && typeof link.metadata === 'object' ? { ...link.metadata } : {}
+
+    const fromAreaDefault = link?.from ?? link?.endpoints?.[0]?.areaId ?? fallbackAreaA
+    const toAreaDefault = link?.to ?? link?.endpoints?.[1]?.areaId ?? fallbackAreaB
+
+    const draft: Link = {
+      id: link?.id ?? '',
+      type: baseType,
+      label: baseLabel,
+      metadata: Object.keys(baseMetadata).length > 0 ? baseMetadata : undefined,
+      endpoints: link?.endpoints,
+      from: fromAreaDefault ?? null,
+      to: toAreaDefault ?? null
+    }
+
+    const normalized = getNormalizedEndpoints(draft)
+
+    const endpoints = normalized.map((endpoint, index) => {
+      const defaultAreaId = index === 0 ? fallbackAreaA : fallbackAreaB
+      const areaId = endpoint.areaId ?? defaultAreaId ?? null
+
+      const resolvedDeviceId = (() => {
+        if (!config) return endpoint.deviceId ?? null
+        if (endpoint.deviceId && deviceMap.get(endpoint.deviceId)) {
+          return endpoint.deviceId
+        }
+        if (areaId) {
+          const fallbackDevice = config.devices.find(device => device.areaId === areaId)
+          return fallbackDevice ? fallbackDevice.id : null
+        }
+        return null
+      })()
+
+      return {
+        areaId,
+        deviceId: resolvedDeviceId,
+        interface: endpoint.interface ?? undefined,
+        interfaceType: endpoint.interfaceType ?? baseType,
+        label: endpoint.label ?? undefined
+      }
+    }) as [LinkEndpoint, LinkEndpoint]
+
+    return {
+      id: draft.id,
+      type: baseType,
+      label: draft.label,
+      metadata: draft.metadata,
+      endpoints,
+      from: endpoints[0]?.areaId ?? null,
+      to: endpoints[1]?.areaId ?? null
+    }
+  }, [config, deviceMap, getNormalizedEndpoints])
+
   const openLinkModal = (link: Link | null = null) => {
+    if (!config) return
+    const prepared = prepareLinkForEditing(link)
     setEditingLink(link)
+    setLinkDraft(prepared)
     setShowLinkModal(true)
   }
 
   const saveLink = (link: Link) => {
     if (!config) return
+
+    const prepared = prepareLinkForEditing(link)
     
     if (editingLink) {
-      // Update existing
+      const targetId = editingLink.id
+      const endpointsClone = prepared.endpoints
+        ? prepared.endpoints.map(endpoint => ({ ...endpoint })) as [LinkEndpoint, LinkEndpoint]
+        : undefined
+
       setConfig({
         ...config,
-        links: config.links.map(l => l.id === link.id ? link : l)
+        links: config.links.map(existing =>
+          existing.id === targetId
+            ? {
+                ...prepared,
+                id: targetId,
+                endpoints: endpointsClone,
+                metadata: prepared.metadata && typeof prepared.metadata === 'object'
+                  ? { ...prepared.metadata }
+                  : prepared.metadata
+              }
+            : existing
+        )
       })
     } else {
-      // Add new
-      setConfig({ ...config, links: [...config.links, { ...link, id: `link-${Date.now()}` }] })
+      const newId = `link-${Date.now()}`
+      const endpointsClone = prepared.endpoints
+        ? prepared.endpoints.map(endpoint => ({ ...endpoint })) as [LinkEndpoint, LinkEndpoint]
+        : undefined
+
+      setConfig({
+        ...config,
+        links: [
+          ...config.links,
+          {
+            ...prepared,
+            id: newId,
+            endpoints: endpointsClone,
+            metadata: prepared.metadata && typeof prepared.metadata === 'object'
+              ? { ...prepared.metadata }
+              : prepared.metadata
+          }
+        ]
+      })
     }
     
     setShowLinkModal(false)
     setEditingLink(null)
+    setLinkDraft(null)
   }
 
   const duplicateLink = (link: Link) => {
     if (!config) return
+    const prepared = prepareLinkForEditing(link)
+    const endpointsClone = prepared.endpoints
+      ? prepared.endpoints.map(endpoint => ({ ...endpoint })) as [LinkEndpoint, LinkEndpoint]
+      : undefined
     const duplicated = {
-      ...link,
-      id: `link-${Date.now()}`
+      ...prepared,
+      id: `link-${Date.now()}`,
+      label: prepared.label ? `${prepared.label} (Copy)` : prepared.label,
+      endpoints: endpointsClone,
+      metadata: prepared.metadata && typeof prepared.metadata === 'object'
+        ? { ...prepared.metadata }
+        : prepared.metadata
     }
     setConfig({ ...config, links: [...config.links, duplicated] })
   }
@@ -402,11 +577,14 @@ export default function SettingsPage() {
         setMessage(null)
       }, 2000)
       
-    } catch (err: any) {
-      console.error('Import error:', err)
+    } catch (error: unknown) {
+      const message = error && typeof error === 'object' && 'message' in error
+        ? String((error as { message?: string }).message)
+        : 'Failed to import data'
+      console.error('Import error:', error)
       setMessage({ 
         type: 'error', 
-        text: err.message || 'Failed to import data' 
+        text: message 
       })
     } finally {
       setIsImporting(false)
@@ -421,7 +599,7 @@ export default function SettingsPage() {
       area.name.toLowerCase().includes(searchArea.toLowerCase()) ||
       area.type.toLowerCase().includes(searchArea.toLowerCase())
     )
-  }, [config?.areas, searchArea])
+  }, [config, searchArea])
 
   const groupedDevices = useMemo(() => {
     if (!config) return new Map<string, Device[]>()
@@ -443,20 +621,52 @@ export default function SettingsPage() {
       })
     
     return grouped
-  }, [config?.devices, searchDevice])
+  }, [config, searchDevice])
 
   const filteredLinks = useMemo(() => {
     if (!config) return []
-    return config.links.filter(link => {
-      const fromArea = config.areas.find(a => a.id === link.from)
-      const toArea = config.areas.find(a => a.id === link.to)
       const searchLower = searchLink.toLowerCase()
-      return (
-        fromArea?.name.toLowerCase().includes(searchLower) ||
-        toArea?.name.toLowerCase().includes(searchLower)
-      )
+
+    return config.links.filter(link => {
+      const endpoints = getNormalizedEndpoints(link)
+      const searchableValues: string[] = []
+
+      endpoints.forEach(endpoint => {
+        if (endpoint.areaId) {
+          const area = areaMap.get(endpoint.areaId)
+          if (area?.name) {
+            searchableValues.push(area.name)
+          }
+        }
+        if (endpoint.deviceId) {
+          const device = deviceMap.get(endpoint.deviceId)
+          if (device?.name) {
+            searchableValues.push(device.name)
+          }
+        }
+        if (endpoint.interface) {
+          searchableValues.push(endpoint.interface)
+        }
+        if (endpoint.label) {
+          searchableValues.push(endpoint.label)
+        }
+      })
+
+      if (link.label) {
+        searchableValues.push(link.label)
+      }
+
+      if (link.type) {
+        searchableValues.push(String(link.type))
+      }
+
+      if (!searchLower) {
+        return true
+      }
+
+      return searchableValues.some(value => value?.toLowerCase().includes(searchLower))
     })
-  }, [config?.links, config?.areas, searchLink])
+  }, [config, areaMap, deviceMap, searchLink, getNormalizedEndpoints])
 
   // Password screen - only render after client hydration
   if (!isClient || !isAuthenticated) {
@@ -723,6 +933,18 @@ export default function SettingsPage() {
                                 <div className="flex items-center gap-2">
                                   <span className="font-medium truncate">{device.name}</span>
                                   <Badge variant="outline" className="text-xs shrink-0">{device.type}</Badge>
+                                  {device.criticality && (
+                                    <Badge 
+                                      variant={device.criticality === 'critical' ? 'destructive' : 
+                                               device.criticality === 'high' ? 'default' : 
+                                               device.criticality === 'normal' ? 'secondary' : 'outline'}
+                                      className="text-xs shrink-0"
+                                    >
+                                      {device.criticality === 'critical' ? '🔴 Critical' :
+                                       device.criticality === 'high' ? '🟠 High' :
+                                       device.criticality === 'normal' ? '🟡 Normal' : '🟢 Low'}
+                                    </Badge>
+                                  )}
                                 </div>
                                 <p className="text-xs text-muted-foreground mt-1">IP: {device.ip}</p>
                               </div>
@@ -801,17 +1023,30 @@ export default function SettingsPage() {
             <p className="text-center text-muted-foreground py-8">No links found</p>
           ) : (
             filteredLinks.map((link) => {
-              const fromArea = config.areas.find(a => a.id === link.from)
-              const toArea = config.areas.find(a => a.id === link.to)
+              const endpoints = getNormalizedEndpoints(link)
+              const [endpointA, endpointB] = endpoints
+
+              const areaA = endpointA.areaId ? areaMap.get(endpointA.areaId) : null
+              const areaB = endpointB.areaId ? areaMap.get(endpointB.areaId) : null
+              const deviceA = endpointA.deviceId ? deviceMap.get(endpointA.deviceId) : null
+              const deviceB = endpointB.deviceId ? deviceMap.get(endpointB.deviceId) : null
+
+              const typeLabel = link.type
+                ? connectionTypeOptions.find(option => option.value === link.type)?.label || String(link.type)
+                : null
               
               return (
-                <div key={link.id} className="flex items-center gap-2 p-3 border rounded-md hover:bg-accent/50 transition-colors">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="font-medium truncate">{fromArea?.name || 'Unknown'}</span>
-                      <span className="text-muted-foreground">→</span>
-                      <span className="font-medium truncate">{toArea?.name || 'Unknown'}</span>
-                    </div>
+                <div key={link.id} className="flex flex-col gap-2 p-3 border rounded-md hover:bg-accent/50 transition-colors">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-medium text-sm truncate">
+                        {link.label || `${deviceA?.name || areaA?.name || 'Endpoint A'} ↔ ${deviceB?.name || areaB?.name || 'Endpoint B'}`}
+                      </span>
+                      {typeLabel && (
+                        <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+                          {typeLabel}
+                        </Badge>
+                      )}
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     <Button
@@ -841,6 +1076,35 @@ export default function SettingsPage() {
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-muted-foreground">
+                    {[{ endpoint: endpointA, area: areaA, device: deviceA, label: 'Endpoint A' }, { endpoint: endpointB, area: areaB, device: deviceB, label: 'Endpoint B' }].map(({ endpoint, area, device, label }) => (
+                      <div key={label} className="flex flex-col gap-1">
+                        <span className="font-semibold text-muted-foreground/80">{label}</span>
+                        <div className="flex flex-wrap items-center gap-1">
+                          <Badge variant="secondary" className="text-[10px]">
+                            {area?.name || 'Select area'}
+                          </Badge>
+                          {device?.name && (
+                            <Badge variant="outline" className="text-[10px]">
+                              {device.name}
+                            </Badge>
+                          )}
+                          {endpoint.interface && (
+                            <Badge variant="outline" className="text-[10px]">
+                              {endpoint.interface}
+                            </Badge>
+                          )}
+                          {endpoint.label && (
+                            <Badge variant="outline" className="text-[10px]">
+                              {endpoint.label}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )
@@ -917,6 +1181,81 @@ export default function SettingsPage() {
                   })
                 }}
               />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Topology Settings */}
+      <Card className="mb-4 lg:mb-6">
+        <CardHeader className="p-4 lg:p-6">
+          <CardTitle className="text-lg lg:text-xl">Topology Display</CardTitle>
+          <CardDescription className="text-xs lg:text-sm">
+            Control how area topology renders on the status page
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3 lg:space-y-4 p-4 lg:p-6 pt-0">
+          <div className="flex items-start gap-3">
+            <input
+              id="topology-remote"
+              type="checkbox"
+              className="mt-1 h-4 w-4 rounded border border-input"
+              checked={config.settings.topology.showRemoteAreas}
+              onChange={(e) => updateTopologySetting('showRemoteAreas', e.target.checked)}
+            />
+            <div className="space-y-1">
+              <Label htmlFor="topology-remote" className="text-sm font-semibold">Show remote area nodes</Label>
+              <p className="text-xs text-muted-foreground">
+                Display neighbouring areas and remote devices connected to the selected site.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3">
+            <input
+              id="topology-latency"
+              type="checkbox"
+              className="mt-1 h-4 w-4 rounded border border-input"
+              checked={config.settings.topology.showLinkLatency}
+              onChange={(e) => updateTopologySetting('showLinkLatency', e.target.checked)}
+            />
+            <div className="space-y-1">
+              <Label htmlFor="topology-latency" className="text-sm font-semibold">Show latency badges on links</Label>
+              <p className="text-xs text-muted-foreground">
+                Keep latency badges visible on each hop for quick performance checks.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3">
+            <input
+              id="topology-compact"
+              type="checkbox"
+              className="mt-1 h-4 w-4 rounded border border-input"
+              checked={config.settings.topology.preferCompactLayout}
+              onChange={(e) => updateTopologySetting('preferCompactLayout', e.target.checked)}
+            />
+            <div className="space-y-1">
+              <Label htmlFor="topology-compact" className="text-sm font-semibold">Compact link rows</Label>
+              <p className="text-xs text-muted-foreground">
+                Reduce spacing for dense areas so more paths fit on screen without scrolling.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3">
+            <input
+              id="topology-unlinked"
+              type="checkbox"
+              className="mt-1 h-4 w-4 rounded border border-input"
+              checked={config.settings.topology.autoIncludeUnlinkedDevices}
+              onChange={(e) => updateTopologySetting('autoIncludeUnlinkedDevices', e.target.checked)}
+            />
+            <div className="space-y-1">
+              <Label htmlFor="topology-unlinked" className="text-sm font-semibold">Display unlinked devices</Label>
+              <p className="text-xs text-muted-foreground">
+                Surface devices without topology assignments so you can link them quickly.
+              </p>
             </div>
           </div>
         </CardContent>
@@ -1034,14 +1373,17 @@ export default function SettingsPage() {
       )}
 
       {/* Link Modal */}
-      {showLinkModal && (
+      {showLinkModal && linkDraft && (
         <LinkModal
-          link={editingLink}
+          link={linkDraft}
           areas={config.areas}
+          devices={config.devices}
+          connectionTypeOptions={connectionTypeOptions}
           onSave={saveLink}
           onClose={() => {
             setShowLinkModal(false)
             setEditingLink(null)
+            setLinkDraft(null)
           }}
         />
       )}
@@ -1265,13 +1607,21 @@ function DeviceModal({ device, areas, onSave, onClose }: { device: Device | null
     areaId: areas[0]?.id || '',
     name: '',
     type: 'router',
-    ip: ''
+    ip: '',
+    criticality: 'normal'
   })
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     onSave(formData)
   }
+
+  const criticalityOptions = [
+    { value: 'critical', label: '🔴 Critical (30s)', description: 'Mission-critical devices' },
+    { value: 'high', label: '🟠 High (1m)', description: 'Important devices' },
+    { value: 'normal', label: '🟡 Normal (2m)', description: 'Standard devices' },
+    { value: 'low', label: '🟢 Low (5m)', description: 'Non-critical devices' }
+  ]
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
@@ -1333,6 +1683,25 @@ function DeviceModal({ device, areas, onSave, onClose }: { device: Device | null
               </select>
             </div>
 
+            <div>
+              <Label htmlFor="device-criticality">Criticality Level *</Label>
+              <select
+                id="device-criticality"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={formData.criticality || 'normal'}
+                onChange={(e) => setFormData({ ...formData, criticality: e.target.value as Device['criticality'] })}
+              >
+                {criticalityOptions.map(option => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground mt-1">
+                {criticalityOptions.find(opt => opt.value === (formData.criticality || 'normal'))?.description}
+              </p>
+            </div>
+
             <div className="flex gap-2 justify-end pt-4">
               <Button type="button" variant="outline" onClick={onClose}>
                 Cancel
@@ -1350,62 +1719,313 @@ function DeviceModal({ device, areas, onSave, onClose }: { device: Device | null
 }
 
 // Link Modal Component
-function LinkModal({ link, areas, onSave, onClose }: { link: Link | null, areas: Area[], onSave: (link: Link) => void, onClose: () => void }) {
-  const [formData, setFormData] = useState<Link>(link || {
-    id: '',
-    from: areas[0]?.id || '',
-    to: areas[1]?.id || ''
-  })
+function LinkModal({
+  link,
+  areas,
+  devices,
+  connectionTypeOptions,
+  onSave,
+  onClose
+}: {
+  link: Link
+  areas: Area[]
+  devices: Device[]
+  connectionTypeOptions: { value: LinkConnectionType | string, label: string }[]
+  onSave: (link: Link) => void
+  onClose: () => void
+}) {
+  const ensureTwoEndpoints = useCallback((endpoints?: LinkEndpoint[]): [LinkEndpoint, LinkEndpoint] => {
+    const normalized = Array.isArray(endpoints) ? endpoints.slice(0, 2) : []
+    while (normalized.length < 2) {
+      normalized.push({ areaId: null, deviceId: null })
+    }
+    return normalized.map(endpoint => ({
+      areaId: endpoint?.areaId ?? null,
+      deviceId: endpoint?.deviceId ?? null,
+      interface: endpoint?.interface ?? undefined,
+      interfaceType: endpoint?.interfaceType ?? undefined,
+      label: endpoint?.label ?? undefined
+    })) as [LinkEndpoint, LinkEndpoint]
+  }, [])
+
+  const buildInitialForm = useCallback((): Link => {
+    const defaultAreaA = link.from ?? link.endpoints?.[0]?.areaId ?? areas[0]?.id ?? null
+    const defaultAreaB = link.to ?? link.endpoints?.[1]?.areaId ?? areas[1]?.id ?? defaultAreaA
+    const baseType = link.type ?? 'wireless'
+
+    const endpoints = ensureTwoEndpoints(link.endpoints)
+
+    const resolvedEndpoints = endpoints.map((endpoint, index) => {
+      const targetAreaId = endpoint.areaId ?? (index === 0 ? defaultAreaA : defaultAreaB) ?? null
+      const devicesForArea = targetAreaId ? devices.filter(device => device.areaId === targetAreaId) : []
+      const existingDevice = endpoint.deviceId && devicesForArea.some(device => device.id === endpoint.deviceId)
+        ? endpoint.deviceId
+        : devicesForArea[0]?.id ?? null
+
+      return {
+        areaId: targetAreaId,
+        deviceId: existingDevice,
+        interface: endpoint.interface ?? undefined,
+        interfaceType: endpoint.interfaceType ?? baseType,
+        label: endpoint.label ?? undefined
+      }
+    }) as [LinkEndpoint, LinkEndpoint]
+
+    return {
+      id: link.id ?? '',
+      label: link.label,
+      type: baseType,
+      metadata: link.metadata,
+      endpoints: resolvedEndpoints,
+      from: resolvedEndpoints[0]?.areaId ?? null,
+      to: resolvedEndpoints[1]?.areaId ?? null
+    }
+  }, [areas, devices, ensureTwoEndpoints, link])
+
+  const [formData, setFormData] = useState<Link>(buildInitialForm)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setFormData(buildInitialForm())
+    setError(null)
+  }, [buildInitialForm])
+
+  const handleTypeChange = (newType: LinkConnectionType | string) => {
+    setFormData(prev => {
+      const endpoints = ensureTwoEndpoints(prev.endpoints).map(endpoint => ({
+        ...endpoint,
+        interfaceType: !endpoint.interfaceType || endpoint.interfaceType === prev.type ? newType : endpoint.interfaceType
+      })) as [LinkEndpoint, LinkEndpoint]
+      return {
+        ...prev,
+        type: newType,
+        endpoints
+      }
+    })
+  }
+
+  const handleEndpointAreaChange = (index: number, areaId: string) => {
+    setFormData(prev => {
+      const endpoints = ensureTwoEndpoints(prev.endpoints)
+      const newAreaId = areaId || null
+      const devicesForArea = newAreaId ? devices.filter(device => device.areaId === newAreaId) : []
+      const currentEndpoint = endpoints[index]
+      const isDeviceValid = currentEndpoint.deviceId && devicesForArea.some(device => device.id === currentEndpoint.deviceId)
+      const newDeviceId = isDeviceValid ? currentEndpoint.deviceId : devicesForArea[0]?.id ?? null
+
+      const updatedEndpoint: LinkEndpoint = {
+        ...currentEndpoint,
+        areaId: newAreaId,
+        deviceId: newDeviceId
+      }
+
+      const updatedEndpoints = endpoints.map((endpoint, idx) => (idx === index ? updatedEndpoint : endpoint)) as [LinkEndpoint, LinkEndpoint]
+
+      return {
+        ...prev,
+        endpoints: updatedEndpoints,
+        from: updatedEndpoints[0]?.areaId ?? null,
+        to: updatedEndpoints[1]?.areaId ?? null
+      }
+    })
+  }
+
+  const handleEndpointDeviceChange = (index: number, deviceId: string) => {
+    setFormData(prev => {
+      const endpoints = ensureTwoEndpoints(prev.endpoints)
+      const updatedEndpoints = endpoints.map((endpoint, idx) => (
+        idx === index
+          ? { ...endpoint, deviceId: deviceId || null }
+          : endpoint
+      )) as [LinkEndpoint, LinkEndpoint]
+
+      return {
+        ...prev,
+        endpoints: updatedEndpoints
+      }
+    })
+  }
+
+  const handleEndpointFieldChange = (index: number, updates: Partial<LinkEndpoint>) => {
+    setFormData(prev => {
+      const endpoints = ensureTwoEndpoints(prev.endpoints)
+      const updatedEndpoints = endpoints.map((endpoint, idx) => (
+        idx === index
+          ? { ...endpoint, ...updates }
+          : endpoint
+      )) as [LinkEndpoint, LinkEndpoint]
+
+      return {
+        ...prev,
+        endpoints: updatedEndpoints
+      }
+    })
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    onSave(formData)
+    setError(null)
+
+    const endpoints = ensureTwoEndpoints(formData.endpoints)
+
+    if (endpoints.some(endpoint => !endpoint.areaId)) {
+      setError('Please select an area for both endpoints.')
+      return
+    }
+
+    const sanitizedEndpoints = endpoints.map(endpoint => ({
+      areaId: endpoint.areaId,
+      deviceId: endpoint.deviceId || null,
+      interface: endpoint.interface?.trim() ? endpoint.interface.trim() : undefined,
+      interfaceType: endpoint.interfaceType || formData.type || undefined,
+      label: endpoint.label?.trim() ? endpoint.label.trim() : undefined
+    })) as [LinkEndpoint, LinkEndpoint]
+
+    const submission: Link = {
+      ...formData,
+      label: formData.label?.toString().trim() ? formData.label.toString().trim() : undefined,
+      endpoints: sanitizedEndpoints,
+      from: sanitizedEndpoints[0]?.areaId ?? null,
+      to: sanitizedEndpoints[1]?.areaId ?? null
+    }
+
+    onSave(submission)
   }
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <Card className="w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+      <Card className="w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
         <CardHeader>
-          <CardTitle>{link ? 'Edit Link' : 'Add New Link'}</CardTitle>
-          <CardDescription>Configure connection between areas</CardDescription>
+          <CardTitle>{link.id ? 'Edit Link' : 'Add New Link'}</CardTitle>
+          <CardDescription>Connect specific devices and interfaces across areas.</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <Label htmlFor="link-from">From Area *</Label>
+                <Label htmlFor="link-label">Link Label</Label>
+                <Input
+                  id="link-label"
+                  value={formData.label ?? ''}
+                  onChange={(e) => setFormData(prev => ({ ...prev, label: e.target.value }))}
+                  placeholder="e.g., Main Backhaul"
+                />
+              </div>
+              <div>
+                <Label htmlFor="link-type">Connection Type</Label>
               <select
-                id="link-from"
+                  id="link-type"
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                value={formData.from}
-                onChange={(e) => setFormData({ ...formData, from: e.target.value })}
+                  value={formData.type ?? ''}
+                  onChange={(e) => handleTypeChange(e.target.value as LinkConnectionType)}
               >
-                {areas.map(area => (
+                  {connectionTypeOptions.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {ensureTwoEndpoints(formData.endpoints).map((endpoint, index) => {
+                const isFirst = index === 0
+                const areaOptions = areas
+                const selectedAreaId = endpoint.areaId ?? ''
+                const devicesForArea = endpoint.areaId ? devices.filter(device => device.areaId === endpoint.areaId) : []
+
+                return (
+                  <div key={index} className="rounded-lg border p-4 space-y-3 bg-muted/20">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-sm">{isFirst ? 'Endpoint A' : 'Endpoint B'}</span>
+                      <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+                        {endpoint.interfaceType || formData.type || 'link'}
+                      </Badge>
+                    </div>
+
+                    <div className="space-y-2">
+            <div>
+                        <Label>Area *</Label>
+              <select
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                          value={selectedAreaId}
+                          onChange={(e) => handleEndpointAreaChange(index, e.target.value)}
+              >
+                          <option value="">Select area</option>
+                          {areaOptions.map(area => (
                   <option key={area.id} value={area.id}>{area.name}</option>
                 ))}
               </select>
             </div>
 
-            <div>
-              <Label htmlFor="link-to">To Area *</Label>
-              <select
-                id="link-to"
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                value={formData.to}
-                onChange={(e) => setFormData({ ...formData, to: e.target.value })}
-              >
-                {areas.map(area => (
-                  <option key={area.id} value={area.id}>{area.name}</option>
-                ))}
-              </select>
+                      <div>
+                        <Label>Device</Label>
+                        <select
+                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-60"
+                          value={endpoint.deviceId ?? ''}
+                          onChange={(e) => handleEndpointDeviceChange(index, e.target.value)}
+                          disabled={!endpoint.areaId || devicesForArea.length === 0}
+                        >
+                          <option value="">{endpoint.areaId ? 'Select device' : 'Select an area first'}</option>
+                          {devicesForArea.map(device => (
+                            <option key={device.id} value={device.id}>{device.name}</option>
+                          ))}
+                        </select>
+                        {endpoint.areaId && devicesForArea.length === 0 && (
+                          <p className="text-xs text-muted-foreground mt-1">No devices available in this area yet.</p>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <Label>Interface Type</Label>
+                          <select
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                            value={endpoint.interfaceType ?? ''}
+                            onChange={(e) => handleEndpointFieldChange(index, { interfaceType: e.target.value || undefined })}
+                          >
+                            <option value="">Use link type ({formData.type})</option>
+                            {connectionTypeOptions.map(option => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <Label>Interface Name</Label>
+                          <Input
+                            value={endpoint.interface ?? ''}
+                            onChange={(e) => handleEndpointFieldChange(index, { interface: e.target.value })}
+                            placeholder={isFirst ? 'e.g., Wireless Uplink' : 'e.g., LAN Port 1'}
+                          />
+                        </div>
+                        <div>
+                          <Label>Interface Label</Label>
+                          <Input
+                            value={endpoint.label ?? ''}
+                            onChange={(e) => handleEndpointFieldChange(index, { label: e.target.value })}
+                            placeholder="Optional display tag"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
 
-            <div className="flex gap-2 justify-end pt-4">
+            {error && (
+              <div className="text-sm text-red-600 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4" />
+                {error}
+              </div>
+            )}
+
+            <div className="flex gap-2 justify-end pt-2">
               <Button type="button" variant="outline" onClick={onClose}>
                 Cancel
               </Button>
               <Button type="submit">
                 <Save className="w-4 h-4 mr-2" />
-                {link ? 'Update' : 'Create'}
+                {link.id ? 'Update Link' : 'Create Link'}
               </Button>
             </div>
           </form>

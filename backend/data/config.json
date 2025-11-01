@@ -8,39 +8,11 @@
       "lng": 120.9842
     },
     {
-      "id": "area-1761117055322",
-      "name": "any",
+      "id": "area-1761910812019",
+      "name": "Manila 2",
       "type": "Schools",
-      "lat": 14.5342,
-      "lng": 120.12234
-    },
-    {
-      "id": "area-1761241216749",
-      "name": "ytesy22",
-      "type": "PisoWiFi Vendo",
-      "lat": 14.2345,
-      "lng": 122.4842
-    },
-    {
-      "id": "area-1761241614244",
-      "name": "test12",
-      "type": "Server/Relay",
-      "lat": 6.515631679769614,
-      "lng": 124.63459893036023
-    },
-    {
-      "id": "area-1761392249368",
-      "name": "test12 (Copy)",
-      "type": "Server/Relay",
-      "lat": 6.534279769614,
-      "lng": 124.3239893036023
-    }
-  ],
-  "links": [
-    {
-      "id": "link-1",
-      "from": "area-1",
-      "to": "area-1761241216749"
+      "lat": 14.222,
+      "lng": 120.222
     }
   ],
   "devices": [
@@ -49,11 +21,114 @@
       "areaId": "area-1",
       "name": "Router 1",
       "type": "router",
-      "ip": "8.8.8.8"
+      "ip": "8.8.8.8",
+      "criticality": "high"
+    },
+    {
+      "id": "device-1761896125716",
+      "areaId": "area-1",
+      "name": "wifi router",
+      "type": "wifi-soho",
+      "ip": "1.1.1.4",
+      "criticality": "normal"
+    },
+    {
+      "id": "device-1761910885198",
+      "areaId": "area-1761910812019",
+      "name": "Reciever 1",
+      "type": "wireless-antenna",
+      "ip": "8.8.8.8",
+      "criticality": "normal"
+    },
+    {
+      "id": "device-1761910904803",
+      "areaId": "area-1761910812019",
+      "name": "Soho",
+      "type": "wifi-soho",
+      "ip": "9.9.9.9",
+      "criticality": "normal"
+    }
+  ],
+  "links": [
+    {
+      "id": "link-1761896167608",
+      "endpoints": [
+        {
+          "areaId": "area-1",
+          "deviceId": "device-1",
+          "interface": "lan1",
+          "interfaceType": "lan",
+          "label": "LAN 1"
+        },
+        {
+          "areaId": "area-1",
+          "deviceId": "device-1761896125716",
+          "interface": "lan1",
+          "interfaceType": "lan",
+          "label": "LAN 1"
+        }
+      ],
+      "type": "lan",
+      "metadata": {},
+      "from": "area-1",
+      "to": "area-1",
+      "label": "manila router 1 to wifi router"
+    },
+    {
+      "id": "link-1761910947051",
+      "endpoints": [
+        {
+          "areaId": "area-1761910812019",
+          "deviceId": "device-1761910885198",
+          "interface": "lan1",
+          "interfaceType": "lan",
+          "label": "LAN1"
+        },
+        {
+          "areaId": "area-1761910812019",
+          "deviceId": "device-1761910904803",
+          "interface": "lan2",
+          "interfaceType": "lan",
+          "label": "LAN2"
+        }
+      ],
+      "type": "lan",
+      "metadata": {},
+      "from": "area-1761910812019",
+      "to": "area-1761910812019",
+      "label": "Manila 2 devices"
+    },
+    {
+      "id": "link-1761910982018",
+      "endpoints": [
+        {
+          "areaId": "area-1",
+          "deviceId": "device-1",
+          "interface": "w01",
+          "interfaceType": "wireless",
+          "label": "wireless1"
+        },
+        {
+          "areaId": "area-1761910812019",
+          "deviceId": "device-1761910885198",
+          "interface": "w01",
+          "interfaceType": "wireless",
+          "label": "wireless antenna"
+        }
+      ],
+      "type": "wireless",
+      "metadata": {},
+      "from": "area-1",
+      "to": "area-1761910812019",
+      "label": "manila 1 to manila 2"
     }
   ],
   "settings": {
-    "pingInterval": 15,
+    "pingInterval": 60,
+    "frontendPollInterval": 60,
+    "cacheMaxAge": 30,
+    "maxHistoryDays": 30,
+    "batchSize": 10,
     "thresholds": {
       "latency": {
         "good": 50,
@@ -63,6 +138,12 @@
         "good": 1,
         "degraded": 5
       }
+    },
+    "topology": {
+      "showRemoteAreas": true,
+      "showLinkLatency": true,
+      "preferCompactLayout": false,
+      "autoIncludeUnlinkedDevices": true
     }
   }
 }

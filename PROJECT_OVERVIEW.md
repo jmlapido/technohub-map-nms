@@ -69,19 +69,11 @@ map-ping/
 - **Latency display** in milliseconds
 
 ### 3. Settings Page (`/settings`)
-- **Add/Edit Areas:**
-  - Name
-  - Latitude/Longitude
-- **Add/Edit Devices:**
-  - Name
-  - IP Address
-  - Area assignment
-- **Add/Edit Links:**
-  - Connect areas
-- **Monitoring Settings:**
-  - Ping interval
-  - Latency thresholds
-- **Save button** to persist changes
+- **Add/Edit Areas:** name, coordinates, type
+- **Add/Edit Devices:** name, IP, area, criticality
+- **Device-level Links:** connect specific devices/interfaces across areas, with validation and automatic cleanup of invalid entries during save
+- **Monitoring Settings:** ping interval & latency thresholds
+- **Auto-save:** changes persist after 5 seconds of inactivity
 
 ## 🔧 Tech Stack
 

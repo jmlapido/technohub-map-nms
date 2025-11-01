@@ -1,7 +1,7 @@
 'use client'
 
 import Link from "next/link"
-import { Map, Activity, Settings, Menu, X, ChevronRight } from "lucide-react"
+import { Map, Activity, Settings, Menu, X, ChevronRight, BarChart3 } from "lucide-react"
 import { useState, useEffect } from "react"
 import { usePathname } from "next/navigation"
 import { useSidebar } from "@/contexts/SidebarContext"
@@ -114,6 +114,18 @@ export default function Sidebar() {
             >
               <Activity className="w-5 h-5 text-green-600" />
               <span className="font-medium">Status</span>
+            </Link>
+            <Link 
+              href="/analytics" 
+              onClick={() => setSidebarOpen(false)}
+              className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
+                pathname === '/analytics' 
+                  ? 'bg-white dark:bg-gray-700 shadow-md' 
+                  : 'hover:bg-white dark:hover:bg-gray-700 shadow-sm'
+              }`}
+            >
+              <BarChart3 className="w-5 h-5 text-indigo-600" />
+              <span className="font-medium">Analytics</span>
             </Link>
             <Link 
               href="/settings" 

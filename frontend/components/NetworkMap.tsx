@@ -1,17 +1,17 @@
 'use client'
 
-import { useEffect, useRef, useState, useMemo } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet'
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
+import { MapContainer, TileLayer, Marker, Popup, Polyline, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { type NetworkStatus, type Config, type AreaStatus, type DeviceStatus } from '@/lib/api'
+import { type NetworkStatus, type Config, type AreaStatus, type DeviceStatus, type NetworkLinkStatus } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Activity, Wifi, WifiOff, AlertTriangle, X, Home, ShoppingBag, GraduationCap, Router, Radio, Satellite, Map as MapIcon, Globe, ChevronDown, ChevronUp } from 'lucide-react'
+import { Activity, Wifi, WifiOff, AlertTriangle, X, Home, ShoppingBag, GraduationCap, Router, Radio, Satellite, Map as MapIcon, ChevronDown, ChevronUp } from 'lucide-react'
 
 // Fix for default marker icons in React-Leaflet
-delete (L.Icon.Default.prototype as any)._getIconUrl
+delete (L.Icon.Default.prototype as Record<string, unknown>)._getIconUrl
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
@@ -21,9 +21,12 @@ L.Icon.Default.mergeOptions({
 interface NetworkMapProps {
   status: NetworkStatus
   config: Config
+  onRefresh?: () => void
+  isRefreshing?: boolean
+  errorMessage?: string | null
 }
 
-export default function NetworkMap({ status, config }: NetworkMapProps) {
+export default function NetworkMap({ status, config, onRefresh, isRefreshing = false, errorMessage }: NetworkMapProps) {
   const [selectedArea, setSelectedArea] = useState<AreaStatus | null>(null)
   const [bounds, setBounds] = useState<L.LatLngBounds | null>(null)
   const [statusPanelMaximized, setStatusPanelMaximized] = useState(false)
@@ -33,6 +36,9 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
   const [visibleCategories, setVisibleCategories] = useState<Set<string>>(new Set())
   const [hasInitializedCategories, setHasInitializedCategories] = useState(false)
   const mapRef = useRef<L.Map>(null)
+
+  const areaMap = useMemo(() => new Map(config.areas.map(area => [area.id, area])), [config.areas])
+  const deviceMap = useMemo(() => new Map(config.devices.map(device => [device.id, device])), [config.devices])
 
   // Calculate initial bounds from all areas
   const getInitialBounds = () => {
@@ -185,19 +191,21 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
   )
   const offlineDevices = totalDevices - onlineDevices
 
+  type GroupedArea = AreaStatus & { areaInfo: Config['areas'][number] }
+  type GroupedAreasByType = Record<string, GroupedArea[]>
+
   // Group areas by type - memoized to prevent unnecessary recalculations
-  const groupedAreas = useMemo(() => {
-    return status.areas.reduce((acc, area) => {
+  const groupedAreas: GroupedAreasByType = useMemo(() => {
+    return status.areas.reduce<GroupedAreasByType>((acc, area) => {
       const areaInfo = config.areas.find(a => a.id === area.areaId)
       if (!areaInfo) return acc
-      
       const type = areaInfo.type || 'Other'
       if (!acc[type]) {
         acc[type] = []
       }
       acc[type].push({ ...area, areaInfo })
       return acc
-    }, {} as Record<string, any[]>)
+    }, {})
   }, [status.areas, config.areas])
 
   // Initialize visible categories with all available types (only once)
@@ -210,9 +218,185 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
     }
   }, [groupedAreas, hasInitializedCategories])
 
-  // Create a map of area statuses
-  const areaStatusMap = new Map(status.areas.map(a => [a.areaId, a]))
-  const linkStatusMap = new Map(status.links.map(l => [l.linkId, l]))
+  const areaStatusMap = useMemo(() => new Map(status.areas.map(a => [a.areaId, a])), [status.areas])
+  const linkStatusMap = useMemo(() => new Map(status.links.map(l => [l.linkId, l])), [status.links])
+
+  type ConfigLink = Config['links'][number]
+
+  interface ResolvedLinkEndpoint {
+    index: number
+    areaId: string | null
+    areaName: string | null
+    deviceId: string | null
+    deviceName: string | null
+    interface?: string | null
+    interfaceType?: string | null
+    label?: string | null
+    status: string
+    latency?: number
+    packetLoss?: number
+    lastChecked?: string | null
+    area?: Config['areas'][number]
+    device?: Config['devices'][number]
+  }
+
+  interface ResolvedLinkData {
+    id: string
+    label?: string
+    status: string
+    latency?: number
+    type?: string
+    metadata?: Record<string, unknown>
+    endpoints: ResolvedLinkEndpoint[]
+    positions: [number, number][] | null
+    sameArea: boolean
+  }
+
+  const normalizeConfigEndpoints = useCallback((link: ConfigLink): [ResolvedLinkEndpoint, ResolvedLinkEndpoint] => {
+    const endpoints = Array.isArray(link.endpoints) ? link.endpoints.slice(0, 2) : []
+
+    while (endpoints.length < 2) {
+      endpoints.push({ areaId: null, deviceId: null, interface: null, interfaceType: null, label: null })
+    }
+
+    return endpoints.map((endpoint, index) => {
+      const fallbackAreaId = index === 0 ? (link.from ?? null) : (link.to ?? null)
+      const areaId = endpoint?.areaId ?? fallbackAreaId ?? null
+      const deviceId = endpoint?.deviceId ?? null
+
+      return {
+        index,
+        areaId,
+        areaName: null,
+        deviceId,
+        deviceName: null,
+        interface: endpoint?.interface ?? null,
+        interfaceType: endpoint?.interfaceType ?? link.type ?? null,
+        label: endpoint?.label ?? null,
+        status: 'unknown',
+        latency: undefined,
+        packetLoss: undefined,
+        lastChecked: null
+      }
+    }) as [ResolvedLinkEndpoint, ResolvedLinkEndpoint]
+  }, [])
+
+  const createOffsetPositions = useCallback((area: Config['areas'][number], linkId: string): [number, number][] => {
+    const hash = Array.from(linkId).reduce((acc, char) => acc + char.charCodeAt(0), 0)
+    const angle = (hash % 360) * (Math.PI / 180)
+    const radius = 0.02 // ~2km offset for visibility
+    const latOffset = radius * Math.cos(angle)
+    const lngOffset = radius * Math.sin(angle)
+
+    return [
+      [area.lat + latOffset, area.lng + lngOffset],
+      [area.lat - latOffset, area.lng - lngOffset]
+    ]
+  }, [])
+
+  const computeLinkPositions = useCallback((endpoints: ResolvedLinkEndpoint[], linkId: string): { positions: [number, number][] | null, sameArea: boolean } => {
+    const [endpointA, endpointB] = endpoints
+    const areaA = endpointA.area
+    const areaB = endpointB.area
+
+    if (!areaA || !areaB) {
+      return { positions: null, sameArea: false }
+    }
+
+    const sameArea = areaA.id === areaB.id
+
+    if (sameArea) {
+      return { positions: createOffsetPositions(areaA, linkId), sameArea: true }
+    }
+
+    return {
+      positions: [
+        [areaA.lat, areaA.lng],
+        [areaB.lat, areaB.lng]
+      ],
+      sameArea: false
+    }
+  }, [createOffsetPositions])
+
+  const mergeLinkStatus = useCallback((statusInfo: NetworkLinkStatus | undefined, endpointIndex: number) => {
+    if (!statusInfo?.endpoints || !Array.isArray(statusInfo.endpoints)) return undefined
+    return statusInfo.endpoints[endpointIndex]
+  }, [])
+
+  const getResolvedLinkData = useCallback((link: ConfigLink): ResolvedLinkData | null => {
+    const statusInfo = linkStatusMap.get(link.id)
+    const normalizedEndpoints = normalizeConfigEndpoints(link)
+
+    const resolvedEndpoints = normalizedEndpoints.map((endpoint, index) => {
+      const area = endpoint.areaId ? areaMap.get(endpoint.areaId) : undefined
+      const device = endpoint.deviceId ? deviceMap.get(endpoint.deviceId) : undefined
+      const statusEndpoint = mergeLinkStatus(statusInfo, index)
+
+      const status = statusEndpoint?.status ?? statusInfo?.status ?? endpoint.status ?? 'unknown'
+
+      return {
+        ...endpoint,
+        area,
+        device,
+        areaName: area?.name ?? statusEndpoint?.areaName ?? endpoint.areaName,
+        deviceName: device?.name ?? statusEndpoint?.deviceName ?? endpoint.deviceName,
+        interface: endpoint.interface ?? statusEndpoint?.interface ?? null,
+        interfaceType: endpoint.interfaceType ?? statusEndpoint?.interfaceType ?? statusInfo?.type ?? null,
+        label: endpoint.label ?? statusEndpoint?.label ?? null,
+        status,
+        latency: typeof statusEndpoint?.latency === 'number' ? statusEndpoint.latency : undefined,
+        packetLoss: typeof statusEndpoint?.packetLoss === 'number' ? statusEndpoint.packetLoss : undefined,
+        lastChecked: statusEndpoint?.lastChecked ?? null
+      }
+    }) as ResolvedLinkEndpoint[]
+
+    const { positions, sameArea } = computeLinkPositions(resolvedEndpoints, link.id)
+
+    if (!positions) {
+      return null
+    }
+
+    return {
+      id: link.id,
+      label: link.label,
+      status: statusInfo?.status ?? 'unknown',
+      latency: typeof statusInfo?.latency === 'number' ? statusInfo.latency : undefined,
+      type: statusInfo?.type ?? link.type,
+      metadata: statusInfo?.metadata ?? link.metadata,
+      endpoints: resolvedEndpoints,
+      positions,
+      sameArea
+    }
+  }, [areaMap, deviceMap, linkStatusMap, normalizeConfigEndpoints, computeLinkPositions, mergeLinkStatus])
+
+  const resolvedLinks = useMemo(() => {
+    return config.links
+      .map(link => getResolvedLinkData(link))
+      .filter((data): data is ResolvedLinkData => data !== null)
+  }, [config.links, getResolvedLinkData])
+
+  interface AreaConnection {
+    link: ResolvedLinkData
+    remote: ResolvedLinkEndpoint
+  }
+
+  const areaConnections = useMemo(() => {
+    if (!selectedArea) return [] as AreaConnection[]
+
+    return resolvedLinks
+      .map(link => {
+        const localIndex = link.endpoints.findIndex(endpoint => endpoint.areaId === selectedArea.areaId)
+        if (localIndex === -1) return null
+        const remoteIndex = localIndex === 0 ? 1 : 0
+        const remoteEndpoint = link.endpoints[remoteIndex]
+
+        return {
+          link,
+          remote: remoteEndpoint
+        } as AreaConnection
+      })
+      .filter((value): value is AreaConnection => value !== null)
+  }, [resolvedLinks, selectedArea])
 
   const getAreaTypeIcon = (type: string) => {
     switch (type) {
@@ -285,6 +469,7 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
           style={{ height: '100%', width: '100%', zIndex: 1 }}
           ref={mapRef}
           className="z-0"
+          zoomControl={false}
           whenReady={() => {
             if (mapRef.current) {
               handleMapCreated(mapRef.current)
@@ -303,27 +488,41 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
           />
         )}
 
-        {/* Draw links between areas */}
-        {config.links.map(link => {
-          const fromArea = config.areas.find(a => a.id === link.from)
-          const toArea = config.areas.find(a => a.id === link.to)
-          const linkStatus = linkStatusMap.get(link.id)
+        {/* Draw links between areas/devices */}
+        {resolvedLinks.map(link => {
+          if (!link.positions) return null
 
-          if (!fromArea || !toArea) return null
+          const polylineColor = getLinkColor(link.status)
+          const strokeWeight = link.sameArea ? 2 : 3.5
 
-          const positions: [number, number][] = [
-            [fromArea.lat, fromArea.lng],
-            [toArea.lat, toArea.lng]
-          ]
+          const endpointSummary = link.endpoints
+            .map(endpoint => endpoint.deviceName || endpoint.areaName || 'Unknown')
+            .join(' ↔ ')
 
           return (
             <Polyline
               key={link.id}
-              positions={positions}
-              color={linkStatus ? getLinkColor(linkStatus.status) : '#6b7280'}
-              weight={3}
-              opacity={0.7}
-            />
+              positions={link.positions}
+              color={polylineColor}
+              weight={strokeWeight}
+              opacity={0.8}
+              dashArray={link.sameArea ? '6 6' : undefined}
+            >
+              <Tooltip direction="center" opacity={0.9} sticky>
+                <div className="space-y-1 text-[11px]">
+                  <div className="font-semibold text-xs">
+                    {link.label || endpointSummary}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {endpointSummary}
+                  </div>
+                  {typeof link.latency === 'number' && (
+                    <div>Latency: {link.latency}ms</div>
+                  )}
+                  <div>Status: {getStatusLabel(link.status)}</div>
+                </div>
+              </Tooltip>
+            </Polyline>
           )
         })}
 
@@ -380,27 +579,61 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
         })}
         </MapContainer>
 
-        {/* Map View Toggle Button */}
-        <div className="absolute top-16 right-2 lg:top-20 lg:right-4 z-[1000]">
-        <div className="bg-white dark:bg-gray-900 rounded-lg shadow-lg border border-border overflow-hidden">
-          <button
-            onClick={() => setMapView(mapView === 'street' ? 'satellite' : 'street')}
-            className="flex items-center gap-2 px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-            title={`Switch to ${mapView === 'street' ? 'satellite' : 'street'} view`}
-          >
-            {mapView === 'street' ? (
-              <>
-                <Satellite className="w-4 h-4" />
-                <span className="text-xs lg:text-sm font-medium">Satellite</span>
-              </>
-            ) : (
-              <>
-                <MapIcon className="w-4 h-4" />
-                <span className="text-xs lg:text-sm font-medium">Street</span>
-              </>
+        {/* Map Controls - positioned lower left */}
+        <div className="absolute bottom-4 left-3 sm:left-6 z-[1000] pointer-events-none">
+          <div className="flex flex-col gap-2 pointer-events-auto w-36 sm:w-44">
+            {errorMessage && (
+              <div className="text-xs text-orange-600 bg-white/90 dark:bg-gray-900/90 px-2 py-1 rounded shadow">
+                {errorMessage}
+              </div>
             )}
-          </button>
-        </div>
+
+            {onRefresh && (
+              <button
+                onClick={onRefresh}
+                className="h-7 w-full text-[11px] bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/90 shadow disabled:opacity-60 disabled:cursor-not-allowed"
+                disabled={isRefreshing}
+              >
+                {isRefreshing ? 'Refreshing…' : 'Refresh'}
+              </button>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => mapRef.current?.zoomIn()}
+                className="h-7 w-7 flex items-center justify-center bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/90 shadow"
+                title="Zoom In"
+                aria-label="Zoom in"
+              >
+                <ChevronUp className="w-3 h-3" />
+              </button>
+              <button
+                onClick={() => mapRef.current?.zoomOut()}
+                className="h-7 w-7 flex items-center justify-center bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/90 shadow"
+                title="Zoom Out"
+                aria-label="Zoom out"
+              >
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              <button
+                onClick={() => setMapView(mapView === 'street' ? 'satellite' : 'street')}
+                className="h-7 flex-1 px-2 text-[11px] bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/90 shadow flex items-center justify-center gap-1"
+                title={`Switch to ${mapView === 'street' ? 'satellite' : 'street'} view`}
+              >
+                {mapView === 'street' ? (
+                  <>
+                    <Satellite className="w-3 h-3" />
+                    <span className="hidden sm:inline">Satellite</span>
+                  </>
+                ) : (
+                  <>
+                    <MapIcon className="w-3 h-3" />
+                    <span className="hidden sm:inline">Street</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Area details panel */}
@@ -473,6 +706,57 @@ export default function NetworkMap({ status, config }: NetworkMapProps) {
                     )
                   })}
                 </div>
+
+                {areaConnections.length > 0 && (
+                  <div className="space-y-2">
+                    <h4 className="text-xs lg:text-sm font-semibold">Connections:</h4>
+                    {areaConnections.map(connection => {
+                      const { link, remote } = connection
+
+                      const remoteName = remote.deviceName || remote.areaName || 'Unknown endpoint'
+                      const interfaceLabel = remote.interface || remote.interfaceType || 'link'
+
+                      return (
+                        <div key={link.id} className="p-2 bg-muted rounded-md space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs lg:text-sm font-medium truncate">
+                              {link.label || remoteName}
+                            </span>
+                            <Badge
+                              className={`text-[10px] uppercase tracking-wide ${
+                                link.status === 'up'
+                                  ? 'bg-green-600 hover:bg-green-700'
+                                  : link.status === 'degraded'
+                                  ? 'bg-yellow-600 hover:bg-yellow-700'
+                                  : link.status === 'down'
+                                  ? 'bg-red-600 hover:bg-red-700'
+                                  : 'bg-gray-600 hover:bg-gray-700'
+                              }`}
+                            >
+                              {getStatusLabel(link.status)}
+                            </Badge>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            ↳ Connected to <span className="font-semibold text-foreground">{remoteName}</span>
+                            {interfaceLabel && (
+                              <span className="ml-1 text-muted-foreground">({interfaceLabel})</span>
+                            )}
+                          </div>
+                          {typeof link.latency === 'number' && (
+                            <div className="text-xs text-muted-foreground">
+                              Average latency: {link.latency}ms
+                            </div>
+                          )}
+                          {typeof remote.latency === 'number' && (
+                            <div className="text-xs text-muted-foreground">
+                              Last measured: {remote.latency}ms
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
