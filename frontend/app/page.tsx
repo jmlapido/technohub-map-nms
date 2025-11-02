@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { networkApi, type NetworkStatus, type Config } from '@/lib/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Home as HomeIcon, ShoppingBag, GraduationCap, Radio, Activity } from 'lucide-react'
 
 // Dynamically import the map component to avoid SSR issues with Leaflet
 const NetworkMap = dynamic(() => import('@/components/NetworkMap'), { 
@@ -17,6 +18,17 @@ const NetworkMap = dynamic(() => import('@/components/NetworkMap'), {
     </div>
   )
 })
+
+// Helper function to get category icon
+const getCategoryIcon = (categoryType: string) => {
+  switch (categoryType) {
+    case 'Homes': return <HomeIcon className="w-3 h-3" />
+    case 'PisoWiFi Vendo': return <ShoppingBag className="w-3 h-3" />
+    case 'Schools': return <GraduationCap className="w-3 h-3" />
+    case 'Server/Relay': return <Radio className="w-3 h-3" />
+    default: return <Activity className="w-3 h-3" />
+  }
+}
 
 export default function Home() {
   const [status, setStatus] = useState<NetworkStatus | null>(null)
@@ -73,6 +85,36 @@ export default function Home() {
     return () => clearInterval(interval)
   }, [loadData])
 
+  // Group areas by category and calculate category stats
+  // This hook must be called before any conditional returns
+  const categoryStats = useMemo(() => {
+    if (!status || !config) return []
+    
+    // Group areas by their type/category
+    const categoryMap = new Map<string, { total: number; up: number }>()
+    
+    status.areas.forEach(area => {
+      const areaInfo = config.areas.find(a => a.id === area.areaId)
+      const category = areaInfo?.type || 'Other'
+      
+      const current = categoryMap.get(category) || { total: 0, up: 0 }
+      current.total += area.devices.length
+      current.up += area.devices.filter(d => d.status === 'up').length
+      categoryMap.set(category, current)
+    })
+    
+    // Convert to array and calculate percentages
+    return Array.from(categoryMap.entries()).map(([category, stats]) => {
+      const percent = stats.total > 0 ? Math.round((stats.up / stats.total) * 100) : 0
+      return {
+        category,
+        total: stats.total,
+        up: stats.up,
+        percent
+      }
+    })
+  }, [status, config])
+
   if (loading && !status) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -114,21 +156,20 @@ export default function Home() {
 
   return (
     <div className="h-full relative">
-      {/* Floating Area Health Bars */}
-      {status && config && (
+      {/* Floating Category Health Cards */}
+      {status && config && categoryStats.length > 0 && (
         <div className="absolute top-6 sm:top-4 left-2 right-2 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 z-50 px-0 sm:px-2 w-auto pointer-events-none">
           {/* Mobile: compact grid 2xN; Desktop: horizontal scroll */}
           <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto p-1 sm:p-0 sm:max-h-none sm:overflow-visible sm:grid-cols-none sm:flex sm:gap-2 sm:overflow-x-auto sm:py-1 sm:px-2 pointer-events-auto">
-            {status.areas.map(area => {
-              const areaInfo = config.areas.find(a => a.id === area.areaId)
-              const total = area.devices.length
-              const up = area.devices.filter(d => d.status === 'up').length
-              const percent = total > 0 ? Math.round((up / total) * 100) : 0
+            {categoryStats.map(({ category, total, up, percent }) => {
               const barColor = percent === 100 ? 'bg-green-600' : percent >= 80 ? 'bg-yellow-600' : 'bg-red-600'
               return (
-                <div key={area.areaId} className="w-full sm:w-auto sm:min-w-[160px] sm:max-w-[220px] px-2 py-1 rounded-md bg-white/75 dark:bg-gray-900/75 border border-border shadow-sm">
+                <div key={category} className="w-full sm:w-auto sm:min-w-[160px] sm:max-w-[220px] px-2 py-1 rounded-md bg-white/75 dark:bg-gray-900/75 border border-border shadow-sm">
                   <div className="flex items-center justify-between gap-2 mb-0.5 sm:mb-1">
-                    <div className="text-[11px] sm:text-xs font-medium truncate" title={areaInfo?.name || area.areaId}>{areaInfo?.name || area.areaId}</div>
+                    <div className="flex items-center gap-1.5">
+                      {getCategoryIcon(category)}
+                      <div className="text-[11px] sm:text-xs font-medium truncate" title={category}>{category}</div>
+                    </div>
                     <div className={`text-[10px] font-bold ${percent === 100 ? 'text-green-600' : percent >= 80 ? 'text-yellow-600' : 'text-red-600'}`}>{percent}%</div>
                   </div>
                   <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-0.5 sm:mb-1">
