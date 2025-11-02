@@ -5,6 +5,7 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline, Tooltip } from 'react
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { type NetworkStatus, type Config, type AreaStatus, type DeviceStatus, type NetworkLinkStatus } from '@/lib/api'
+import { formatLatency } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -516,9 +517,7 @@ export default function NetworkMap({ status, config, onRefresh, isRefreshing = f
                   <div className="text-[10px] text-muted-foreground">
                     {endpointSummary}
                   </div>
-                  {typeof link.latency === 'number' && (
-                    <div>Latency: {link.latency}ms</div>
-                  )}
+                  <div>Latency: {formatLatency(link.latency)}</div>
                   <div>Status: {getStatusLabel(link.status)}</div>
                 </div>
               </Tooltip>
@@ -689,9 +688,7 @@ export default function NetworkMap({ status, config, onRefresh, isRefreshing = f
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          {device.latency && (
-                            <span className="text-xs font-medium">{device.latency}ms</span>
-                          )}
+                          <span className="text-xs font-medium">{formatLatency(device.latency)}</span>
                           <Badge 
                             className={`text-xs ${
                               device.status === 'up' ? 'bg-green-600 hover:bg-green-700' :
@@ -742,16 +739,12 @@ export default function NetworkMap({ status, config, onRefresh, isRefreshing = f
                               <span className="ml-1 text-muted-foreground">({interfaceLabel})</span>
                             )}
                           </div>
-                          {typeof link.latency === 'number' && (
-                            <div className="text-xs text-muted-foreground">
-                              Average latency: {link.latency}ms
-                            </div>
-                          )}
-                          {typeof remote.latency === 'number' && (
-                            <div className="text-xs text-muted-foreground">
-                              Last measured: {remote.latency}ms
-                            </div>
-                          )}
+                          <div className="text-xs text-muted-foreground">
+                            Average latency: {formatLatency(link.latency)}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Last measured: {formatLatency(remote.latency)}
+                          </div>
                         </div>
                       )
                     })}

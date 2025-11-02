@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useMemo } from 'react'
 import { networkApi, type NetworkStatus, type Config, type DeviceStatus, type NetworkLinkStatus, type TopologySettings, type AreaStatus } from '@/lib/api'
+import { formatLatency } from '@/lib/utils'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -32,9 +33,10 @@ interface DeviceChipProps {
   subtitle?: string
   status?: DeviceStatus['status'] | NetworkLinkStatus['status'] | 'unknown'
   variant: 'remote' | 'local' | 'summary' | 'interface'
+  className?: string
 }
 
-function DeviceChip({ label, subtitle, status = 'unknown', variant }: DeviceChipProps) {
+function DeviceChip({ label, subtitle, status = 'unknown', variant, className }: DeviceChipProps) {
   const baseClasses =
     variant === 'remote'
       ? 'border-blue-200/60 bg-blue-50/60 text-blue-700 dark:border-blue-500/30 dark:bg-blue-900/30 dark:text-blue-100'
@@ -45,7 +47,7 @@ function DeviceChip({ label, subtitle, status = 'unknown', variant }: DeviceChip
           : 'border-emerald-200/60 bg-emerald-50/60 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-900/30 dark:text-emerald-100'
 
   return (
-    <div className={`flex flex-col rounded-md border px-2 py-1 min-w-[120px] ${baseClasses}`}>
+    <div className={`flex flex-col rounded-md border px-2 py-1 min-w-0 w-full sm:w-auto sm:min-w-[120px] ${baseClasses} ${className || ''}`}>
       <div className="flex items-center gap-1">
         <span className={`inline-block h-2.5 w-2.5 rounded-full ${getDeviceStatusDot(status)}`} aria-hidden="true"></span>
         <span className="font-medium truncate text-xs">{label}</span>
@@ -85,7 +87,10 @@ interface LinkConnectorSegmentProps {
 
 function LinkConnectorSegment({ status, latency, fromInterface, fromInterfaceType, toInterface, toInterfaceType, showLatencyBadge = true }: LinkConnectorSegmentProps) {
   const color = resolveLinkColor(status)
-  const latencyTheme = typeof latency === 'number' ? resolveLatencyBadgeStyle(latency) : null
+  const isNumericLatency = typeof latency === 'number' && !Number.isNaN(latency)
+  const latencyTheme = isNumericLatency ? resolveLatencyBadgeStyle(latency) : null
+  const latencyLabel = formatLatency(latency)
+  const badgeTheme = latencyTheme ?? { fill: '#6b7280', text: '#ffffff' }
 
   const renderInterface = (label?: string | null, type?: string | null) => {
     const marker = label || type ? resolveInterfaceMarker(type || label) : null
@@ -108,16 +113,16 @@ function LinkConnectorSegment({ status, latency, fromInterface, fromInterfaceTyp
   }
 
   return (
-    <div className="flex items-center gap-1.5 sm:gap-2">
+    <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:gap-3">
       {renderInterface(fromInterface, fromInterfaceType)}
-      <div className="relative flex items-center justify-center">
-        <div className="h-[2px] w-6 sm:w-10 rounded-full" style={{ backgroundColor: color }} />
-        {latencyTheme && showLatencyBadge && (
+      <div className="relative flex items-center justify-center py-3 sm:py-0">
+        <div className="w-[2px] h-8 sm:h-[2px] sm:w-10 rounded-full" style={{ backgroundColor: color }} />
+        {showLatencyBadge && (
           <span
-            className="absolute -top-4 sm:-top-5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-semibold shadow-sm"
-            style={{ backgroundColor: latencyTheme.fill, color: latencyTheme.text }}
+            className="absolute left-3 top-1/2 -translate-y-1/2 inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-semibold shadow-sm whitespace-nowrap sm:left-1/2 sm:-top-5 sm:translate-y-0 sm:-translate-x-1/2"
+            style={{ backgroundColor: badgeTheme.fill, color: badgeTheme.text }}
           >
-            {latency}ms
+            {latencyLabel}
           </span>
         )}
       </div>
@@ -1109,17 +1114,18 @@ function AreaTopology({ area, config, linkStatusMap, topologySettings }: AreaTop
 
   sequences.sort((a, b) => a.nodes[0].label.localeCompare(b.nodes[0].label))
 
-  const renderNodeChip = (node: PathNode, key: string) => {
+  const renderNodeChip = (node: PathNode, key: string, extraClassName = '') => {
     if (!showRemoteAreas && node.variant === 'remote') {
       return (
-        <Badge
-          key={key}
-          variant="outline"
-          className="text-[10px] uppercase tracking-wide"
-          title={node.label}
-        >
-          Remote Hidden
-        </Badge>
+        <div key={key} className={extraClassName}>
+          <Badge
+            variant="outline"
+            className="text-[10px] uppercase tracking-wide"
+            title={node.label}
+          >
+            Remote Hidden
+          </Badge>
+        </div>
       )
     }
 
@@ -1130,11 +1136,108 @@ function AreaTopology({ area, config, linkStatusMap, topologySettings }: AreaTop
         subtitle={node.subtitle}
         status={node.status}
         variant={node.variant}
+        className={extraClassName}
       />
     )
   }
 
-  const connectionRowClass = `flex flex-wrap items-center rounded-md border border-border/40 bg-muted/30 ${preferCompactLayout ? 'gap-1.5 px-2.5 py-1.5 text-[13px]' : 'gap-2 px-3 py-2'}`
+  const desktopConnectionRowClass = `hidden sm:flex sm:flex-wrap sm:items-center rounded-md border border-border/40 bg-muted/30 w-full ${preferCompactLayout ? 'gap-2 px-2.5 py-2 text-[13px]' : 'gap-3 px-3 py-3'}`
+
+  const formatInterfaceLabel = (iface?: string | null, type?: string | null) => {
+    if (typeof iface === 'string' && iface.trim().length > 0) return iface
+    if (typeof type === 'string' && type.trim().length > 0) return type
+    return 'link'
+  }
+
+  const renderMobileEdge = (edge: PathEdge, keySuffix: string) => {
+    const latencyText = formatLatency(edge.latency)
+    const showLatencyInfo = showLatencyBadge && latencyText !== '—'
+
+    return (
+      <div key={`mobile-edge-${keySuffix}`} className="flex-1 rounded-md border border-border/40 bg-background/90 px-3 py-2 text-xs shadow-sm space-y-2">
+        <div className="flex items-center justify-between text-[10px] uppercase text-muted-foreground">
+          <span>Connection</span>
+          <span className="inline-flex items-center gap-1 capitalize text-foreground/80">
+            <span
+              className="inline-block h-1.5 w-1.5 rounded-full"
+              style={{ backgroundColor: resolveLinkColor(edge.status) }}
+            />
+            {getLinkStatusLabel(edge.status)}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-1 text-[11px] text-foreground">
+          <span>{formatInterfaceLabel(edge.fromInterface, edge.fromInterfaceType)}</span>
+          <span className="text-muted-foreground">→</span>
+          <span>{formatInterfaceLabel(edge.toInterface, edge.toInterfaceType)}</span>
+        </div>
+        {showLatencyInfo && (
+          <div className="inline-flex items-center gap-1 text-[10px] font-medium">
+            <span className="inline-flex items-center rounded-full bg-slate-200 px-2 py-0.5 text-slate-700 dark:bg-slate-700 dark:text-slate-100">
+              {latencyText}
+            </span>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const renderSequenceMobile = (sequence: PathSequence, sequenceIndex: number) => (
+    <div key={`sequence-${sequenceIndex}-mobile`} className="sm:hidden rounded-md border border-border/40 bg-muted/20 p-3 space-y-4">
+      {sequence.nodes.map((node, nodeIndex) => {
+        const edge = sequence.edges[nodeIndex]
+        const hasNext = Boolean(edge)
+
+        return (
+          <React.Fragment key={`sequence-${sequenceIndex}-mobile-node-${nodeIndex}`}>
+            <div className="flex gap-3">
+              <div className="flex flex-col items-center">
+                <span className={`mt-1 h-3 w-3 rounded-full border border-border ${getDeviceStatusDot((node.status as DeviceStatus['status']) || 'unknown')}`} />
+                {hasNext && <span className="flex-1 w-[2px] bg-border/60" />}
+              </div>
+              <DeviceChip
+                label={node.label}
+                subtitle={node.subtitle}
+                status={node.status}
+                variant={node.variant}
+                className="w-full"
+              />
+            </div>
+            {hasNext && (
+              <div className="flex gap-3 pl-2">
+                <div className="flex flex-col items-center">
+                  <span className="flex-1 w-[2px] bg-border/60" />
+                </div>
+                {renderMobileEdge(edge, `${sequenceIndex}-${nodeIndex}`)}
+              </div>
+            )}
+          </React.Fragment>
+        )
+      })}
+    </div>
+  )
+
+  const renderSequenceDesktop = (sequence: PathSequence, index: number) => (
+    <div key={`sequence-${index}-desktop`} className={desktopConnectionRowClass}>
+      {renderNodeChip(sequence.nodes[0], `sequence-${index}-node-0-desktop`, 'w-full sm:w-auto sm:min-w-[160px]')}
+      {sequence.edges.map((edge, edgeIndex) => {
+        const targetNode = sequence.nodes[edgeIndex + 1]
+        return (
+          <React.Fragment key={`${edge.id}-desktop-${edgeIndex}`}>
+            <LinkConnectorSegment
+              status={edge.status}
+              latency={edge.latency}
+              fromInterface={edge.fromInterface}
+              fromInterfaceType={edge.fromInterfaceType}
+              toInterface={edge.toInterface}
+              toInterfaceType={edge.toInterfaceType}
+              showLatencyBadge={showLatencyBadge}
+            />
+            {renderNodeChip(targetNode, `sequence-${index}-node-${edgeIndex + 1}-desktop`, 'w-full sm:w-auto sm:min-w-[160px]')}
+          </React.Fragment>
+        )
+      })}
+    </div>
+  )
 
   const connectedLocalDeviceIds = new Set<string>()
   sequences.forEach(sequence => {
@@ -1170,27 +1273,11 @@ function AreaTopology({ area, config, linkStatusMap, topologySettings }: AreaTop
   }
 
   const sequenceContent = sequences.length > 0 ? (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {sequences.map((sequence, index) => (
-        <div key={`sequence-${index}`} className={connectionRowClass}>
-          {renderNodeChip(sequence.nodes[0], `sequence-${index}-node-0`)}
-          {sequence.edges.map((edge, edgeIndex) => {
-            const targetNode = sequence.nodes[edgeIndex + 1]
-            return (
-              <React.Fragment key={`${edge.id}-${edgeIndex}`}>
-                <LinkConnectorSegment
-                  status={edge.status}
-                  latency={edge.latency}
-                  fromInterface={edge.fromInterface}
-                  fromInterfaceType={edge.fromInterfaceType}
-                  toInterface={edge.toInterface}
-                  toInterfaceType={edge.toInterfaceType}
-                  showLatencyBadge={showLatencyBadge}
-                />
-                {renderNodeChip(targetNode, `sequence-${index}-node-${edgeIndex + 1}`)}
-              </React.Fragment>
-            )
-          })}
+        <div key={`sequence-${index}`} className="space-y-3">
+          {renderSequenceMobile(sequence, index)}
+          {renderSequenceDesktop(sequence, index)}
         </div>
       ))}
     </div>
