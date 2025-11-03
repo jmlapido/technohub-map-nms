@@ -393,7 +393,10 @@ export default function AnalyticsPage() {
     const severityOrder: Record<'down' | 'degraded', number> = { down: 1, degraded: 0 }
 
     return areas.sort((a, b) => {
-      const severity = severityOrder[b.status] - severityOrder[a.status]
+      // TypeScript knows these are 'down' or 'degraded' due to the filter above
+      const severityA = severityOrder[a.status as 'down' | 'degraded'] ?? 0
+      const severityB = severityOrder[b.status as 'down' | 'degraded'] ?? 0
+      const severity = severityB - severityA
       if (severity !== 0) return severity
       const downDiff = b.downDevices - a.downDevices
       if (downDiff !== 0) return downDiff
