@@ -21,7 +21,7 @@
       "areaId": "area-1",
       "name": "Router 1",
       "type": "router",
-      "ip": "8.8.8.8",
+      "ip": "192.168.1.97",
       "criticality": "high"
     },
     {
@@ -29,7 +29,7 @@
       "areaId": "area-1",
       "name": "wifi router",
       "type": "wifi-soho",
-      "ip": "1.1.1.4",
+      "ip": "192.168.1.99",
       "criticality": "normal"
     },
     {
@@ -37,7 +37,7 @@
       "areaId": "area-1761910812019",
       "name": "Reciever 1",
       "type": "wireless-antenna",
-      "ip": "8.8.8.8",
+      "ip": "192.168.1.96",
       "criticality": "normal"
     },
     {

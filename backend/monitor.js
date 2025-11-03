@@ -10,6 +10,22 @@ let isMonitoring = false;
 const BATCH_SIZE = 10;
 const MAX_CONCURRENT_PINGS = 5;
 
+function formatLatencyForLog(latency) {
+  if (typeof latency === 'number' && Number.isFinite(latency)) {
+    if (latency <= 0) {
+      return 'sub 0ms';
+    }
+
+    if (latency < 1) {
+      return '<1ms';
+    }
+
+    return `${latency}ms`;
+  }
+
+  return 'sub 0ms';
+}
+
 function startMonitoring(config) {
   stopMonitoring();
   currentConfig = config;
@@ -136,7 +152,7 @@ async function pingDevice(device) {
     const logLevel = criticality === 'critical' ? 'info' : 'debug';
     
     if (logLevel === 'info' || status !== 'up') {
-      console.log(`[${criticality.toUpperCase()}] ${device.name} (${device.ip}): ${status} - ${latency}ms (${duration}ms total)`);
+      console.log(`[${criticality.toUpperCase()}] ${device.name} (${device.ip}): ${status} - ${formatLatencyForLog(latency)} (${duration}ms total)`);
     }
     
     // Clear cache only if status might have changed

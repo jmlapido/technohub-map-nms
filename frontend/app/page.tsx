@@ -37,6 +37,63 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState(0)
 
+  const categoryOrder = ['Server/Relay', 'Schools', 'PisoWiFi Vendo', 'Homes'] as const
+
+  type CategoryOrder = typeof categoryOrder[number]
+
+  const categoryStats = useMemo(() => {
+    if (!status || !config) {
+      return []
+    }
+
+    const statusAreaMap = new Map(status.areas.map(area => [area.areaId, area]))
+    const statsMap = new Map<string, { type: string; totalDevices: number; upDevices: number; areaCount: number }>()
+
+    config.areas.forEach(areaInfo => {
+      const type = areaInfo.type || 'Other'
+      const areaStatus = statusAreaMap.get(areaInfo.id)
+      const devices = areaStatus
+        ? areaStatus.devices
+        : config.devices.filter(device => device.areaId === areaInfo.id).map(device => ({ status: 'unknown' }))
+
+      const totalDevices = devices.length
+      const upDevices = areaStatus ? areaStatus.devices.filter(device => device.status === 'up').length : 0
+
+      if (!statsMap.has(type)) {
+        statsMap.set(type, { type, totalDevices: 0, upDevices: 0, areaCount: 0 })
+      }
+
+      const stat = statsMap.get(type)!
+      stat.totalDevices += totalDevices
+      stat.upDevices += upDevices
+      stat.areaCount += 1
+    })
+
+    const unsortedStats = Array.from(statsMap.values()).map(stat => ({
+      ...stat,
+      percent: stat.totalDevices > 0 ? Math.round((stat.upDevices / stat.totalDevices) * 100) : 0
+    }))
+
+    return unsortedStats.sort((a, b) => {
+      const indexA = (categoryOrder as ReadonlyArray<string>).indexOf(a.type as CategoryOrder)
+      const indexB = (categoryOrder as ReadonlyArray<string>).indexOf(b.type as CategoryOrder)
+
+      if (indexA === -1 && indexB === -1) {
+        return a.type.localeCompare(b.type)
+      }
+
+      if (indexA === -1) {
+        return 1
+      }
+
+      if (indexB === -1) {
+        return -1
+      }
+
+      return indexA - indexB
+    })
+  }, [status, config])
+
   // Memoized load function for better performance
   const loadData = useCallback(async () => {
     try {
@@ -85,36 +142,6 @@ export default function Home() {
     return () => clearInterval(interval)
   }, [loadData])
 
-  // Group areas by category and calculate category stats
-  // This hook must be called before any conditional returns
-  const categoryStats = useMemo(() => {
-    if (!status || !config) return []
-    
-    // Group areas by their type/category
-    const categoryMap = new Map<string, { total: number; up: number }>()
-    
-    status.areas.forEach(area => {
-      const areaInfo = config.areas.find(a => a.id === area.areaId)
-      const category = areaInfo?.type || 'Other'
-      
-      const current = categoryMap.get(category) || { total: 0, up: 0 }
-      current.total += area.devices.length
-      current.up += area.devices.filter(d => d.status === 'up').length
-      categoryMap.set(category, current)
-    })
-    
-    // Convert to array and calculate percentages
-    return Array.from(categoryMap.entries()).map(([category, stats]) => {
-      const percent = stats.total > 0 ? Math.round((stats.up / stats.total) * 100) : 0
-      return {
-        category,
-        total: stats.total,
-        up: stats.up,
-        percent
-      }
-    })
-  }, [status, config])
-
   if (loading && !status) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -158,26 +185,30 @@ export default function Home() {
     <div className="h-full relative">
       {/* Floating Category Health Cards */}
       {status && config && categoryStats.length > 0 && (
-        <div className="absolute top-6 sm:top-4 left-2 right-2 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 z-50 px-0 sm:px-2 w-auto pointer-events-none">
+        <div className="absolute top-4 sm:top-4 left-2 right-2 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 z-50 px-0 sm:px-2 w-auto pointer-events-none">
           {/* Mobile: compact grid 2xN; Desktop: horizontal scroll */}
-          <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto p-1 sm:p-0 sm:max-h-none sm:overflow-visible sm:grid-cols-none sm:flex sm:gap-2 sm:overflow-x-auto sm:py-1 sm:px-2 pointer-events-auto">
-            {categoryStats.map(({ category, total, up, percent }) => {
-              const barColor = percent === 100 ? 'bg-green-600' : percent >= 80 ? 'bg-yellow-600' : 'bg-red-600'
+          <div className="grid grid-cols-2 gap-1 sm:max-h-36 overflow-y-auto p-1 sm:p-0 sm:max-h-none sm:overflow-visible sm:grid-cols-none sm:flex sm:gap-2 sm:overflow-x-auto sm:py-1 sm:px-2 pointer-events-auto">
+            {categoryStats.map(category => {
+              const barColor = category.percent === 100 ? 'bg-green-600' : category.percent >= 80 ? 'bg-yellow-600' : 'bg-red-600'
               return (
-                <div key={category} className="w-full sm:w-auto sm:min-w-[160px] sm:max-w-[220px] px-2 py-1 rounded-md bg-white/75 dark:bg-gray-900/75 border border-border shadow-sm">
-                  <div className="flex items-center justify-between gap-2 mb-0.5 sm:mb-1">
+                <div key={category.type} className="w-full sm:w-auto sm:min-w-[150px] sm:max-w-[210px] px-1.5 py-1 rounded-md bg-white/80 dark:bg-gray-900/80 border border-border/80 shadow-sm">
+                  <div className="flex items-center justify-between gap-1 mb-0.5 sm:mb-1">
                     <div className="flex items-center gap-1.5">
-                      {getCategoryIcon(category)}
-                      <div className="text-[11px] sm:text-xs font-medium truncate" title={category}>{category}</div>
+                      {getCategoryIcon(category.type)}
+                      <div className="text-[10px] sm:text-xs font-medium truncate" title={category.type}>{category.type}</div>
                     </div>
-                    <div className={`text-[10px] font-bold ${percent === 100 ? 'text-green-600' : percent >= 80 ? 'text-yellow-600' : 'text-red-600'}`}>{percent}%</div>
+                    <div className={`text-[9px] sm:text-[10px] font-bold ${category.percent === 100 ? 'text-green-600' : category.percent >= 80 ? 'text-yellow-600' : 'text-red-600'}`}>{category.percent}%</div>
                   </div>
-                  <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-0.5 sm:mb-1">
+                  <div className="flex items-center justify-between text-[9px] sm:text-[10px] text-muted-foreground mb-0.5 sm:mb-1">
                     <span>Devices</span>
-                    <span className="font-medium">{up}/{total}</span>
+                    <span className="font-medium">{category.totalDevices}</span>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-1 sm:h-1.5">
-                    <div className={`h-1 sm:h-1.5 rounded-full transition-all ${barColor}`} style={{ width: `${percent}%` }}></div>
+                  <div className="flex items-center justify-between text-[9px] sm:text-[10px] text-muted-foreground mb-0.5 sm:mb-1">
+                    <span>Online</span>
+                    <span className="font-medium">{category.upDevices}</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-[3px] sm:h-1.5">
+                    <div className={`h-[3px] sm:h-1.5 rounded-full transition-all ${barColor}`} style={{ width: `${category.percent}%` }}></div>
                   </div>
                 </div>
               )
