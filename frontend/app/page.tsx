@@ -30,16 +30,16 @@ const getCategoryIcon = (categoryType: string) => {
   }
 }
 
+const categoryOrder = ['Server/Relay', 'Schools', 'PisoWiFi Vendo', 'Homes'] as const
+
+type CategoryOrder = typeof categoryOrder[number]
+
 export default function Home() {
   const [status, setStatus] = useState<NetworkStatus | null>(null)
   const [config, setConfig] = useState<Config | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState(0)
-
-  const categoryOrder = ['Server/Relay', 'Schools', 'PisoWiFi Vendo', 'Homes'] as const
-
-  type CategoryOrder = typeof categoryOrder[number]
 
   const categoryStats = useMemo(() => {
     if (!status || !config) {
@@ -54,7 +54,7 @@ export default function Home() {
       const areaStatus = statusAreaMap.get(areaInfo.id)
       const devices = areaStatus
         ? areaStatus.devices
-        : config.devices.filter(device => device.areaId === areaInfo.id).map(device => ({ status: 'unknown' }))
+        : config.devices.filter(device => device.areaId === areaInfo.id).map(_ => ({ status: 'unknown' }))
 
       const totalDevices = devices.length
       const upDevices = areaStatus ? areaStatus.devices.filter(device => device.status === 'up').length : 0
