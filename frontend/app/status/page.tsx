@@ -543,11 +543,9 @@ export default function StatusPage() {
       const base =
         device.status === 'up'
           ? 1
-          : device.status === 'degraded'
-            ? 0.5
-            : device.status === 'unknown'
-              ? 0.35
-              : 0
+          : device.status === 'unknown'
+            ? 0.35
+            : 0 // 'down' or any other status
 
       weightedSum += base * weight
       totalWeight += weight
