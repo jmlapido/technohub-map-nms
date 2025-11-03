@@ -374,7 +374,8 @@ export default function AnalyticsPage() {
       .map(area => {
         const info = areaMap.get(area.areaId)
         const downDevices = area.devices.filter(device => device.status === 'down').length
-        const degradedDevices = area.devices.filter(device => device.status === 'degraded').length
+        // Devices don't have 'degraded' status - only areas do
+        const degradedDevices = 0
         const unknownDevices = area.devices.filter(device => device.status === 'unknown').length
 
         return {
