@@ -190,15 +190,20 @@ function resolveLinkColor(status: NetworkLinkStatus['status'] | 'unknown') {
 const FALLBACK_LAST_CHECKED = '1970-01-01T00:00:00.000Z'
 
 function deriveAreaStatusFromDevices(devices: DeviceStatus[]): AreaStatus['status'] {
-  if (devices.some(device => device.status === 'down')) {
+  if (devices.length === 0) {
     return 'down'
   }
-  if (devices.some(device => device.status === 'degraded')) {
-    return 'degraded'
+  
+  const upDevices = devices.filter(device => device.status === 'up').length
+  const downDevices = devices.filter(device => device.status === 'down').length
+  
+  if (downDevices === devices.length) {
+    return 'down'
   }
-  if (devices.some(device => device.status === 'up')) {
+  if (upDevices === devices.length) {
     return 'up'
   }
+  // Mixed status (some up, some down) = degraded
   return 'degraded'
 }
 
