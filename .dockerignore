@@ -66,3 +66,7 @@ tmp
 temp
 *.tmp
 
+# Backend data directory (contains sensitive runtime data)
+backend/data/**/*
+!backend/data/.gitkeep
+
