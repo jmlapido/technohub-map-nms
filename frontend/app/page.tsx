@@ -52,11 +52,9 @@ export default function Home() {
     config.areas.forEach(areaInfo => {
       const type = areaInfo.type || 'Other'
       const areaStatus = statusAreaMap.get(areaInfo.id)
-      const devices = areaStatus
-        ? areaStatus.devices
-        : config.devices.filter(device => device.areaId === areaInfo.id).map(_ => ({ status: 'unknown' }))
-
-      const totalDevices = devices.length
+      const totalDevices = areaStatus
+        ? areaStatus.devices.length
+        : config.devices.filter(device => device.areaId === areaInfo.id).length
       const upDevices = areaStatus ? areaStatus.devices.filter(device => device.status === 'up').length : 0
 
       if (!statsMap.has(type)) {
