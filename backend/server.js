@@ -2,7 +2,7 @@
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-const { initDatabase, getCurrentStatus, clearStatusCache, resetDatabase } = require('./database');
+const { initDatabase, getCurrentStatus, clearStatusCache, resetDatabase, getDatabaseStats } = require('./database');
 const { startMonitoring, restartMonitoring } = require('./monitor');
 const archiver = require('archiver');
 const multer = require('multer');
@@ -720,13 +720,30 @@ app.post('/api/import', upload.single('backup'), async (req, res) => {
   }
 });
 
+// Check database statistics
+app.get('/api/database/stats', (req, res) => {
+  try {
+    const stats = getDatabaseStats();
+    res.json({
+      ...stats,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Database stats error:', error);
+    res.status(500).json({ 
+      error: 'Failed to get database stats', 
+      details: error.message 
+    });
+  }
+});
+
 // Reset database - clears all ping history data
-app.post('/api/database/reset', (req, res) => {
+app.post('/api/database/reset', async (req, res) => {
   try {
     const { createBackup = true } = req.body; // Default to creating backup for safety
     
-    // Reset the database
-    resetDatabase(createBackup);
+    // Reset the database (now async)
+    await resetDatabase(createBackup);
     
     // Clear status cache
     clearStatusCache();

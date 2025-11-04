@@ -602,7 +602,7 @@ function clearStatusCache() {
 }
 
 // Safely reset database - clears all data and reinitializes schema
-function resetDatabase(createBackup = true) {
+async function resetDatabase(createBackup = true) {
   console.log('Starting database reset...');
   
   try {
@@ -614,6 +614,28 @@ function resetDatabase(createBackup = true) {
         console.warn('Error closing database connection:', e.message);
       }
       db = null;
+    }
+    
+    // Wait a moment to ensure all connections are released
+    // This helps on Windows where file locks can persist briefly
+    const waitForRelease = (ms = 100) => {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    };
+    
+    // Get row counts before deletion for verification
+    let beforeCount = { history: 0, aggregates: 0 };
+    if (fs.existsSync(dbPath)) {
+      try {
+        const checkDb = new Database(dbPath);
+        const historyCount = checkDb.prepare('SELECT COUNT(*) as count FROM ping_history').get();
+        const aggregatesCount = checkDb.prepare('SELECT COUNT(*) as count FROM ping_aggregates').get();
+        beforeCount.history = historyCount?.count || 0;
+        beforeCount.aggregates = aggregatesCount?.count || 0;
+        checkDb.close();
+        console.log(`Records before reset: ${beforeCount.history} history, ${beforeCount.aggregates} aggregates`);
+      } catch (e) {
+        console.warn('Could not count records before reset:', e.message);
+      }
     }
     
     // Create backup if requested and database exists
@@ -630,55 +652,110 @@ function resetDatabase(createBackup = true) {
       }
     }
     
+    // Remove any journal/WAL/SHM files first (they can lock the database)
+    const journalPath = `${dbPath}-journal`;
+    const walPath = `${dbPath}-wal`;
+    const shmPath = `${dbPath}-shm`;
+    
+    [journalPath, walPath, shmPath].forEach(file => {
+      if (fs.existsSync(file)) {
+        try {
+          fs.unlinkSync(file);
+          console.log(`Removed ${path.basename(file)}`);
+        } catch (e) {
+          console.warn(`Could not remove ${path.basename(file)}:`, e.message);
+        }
+      }
+    });
+    
+    await waitForRelease(200); // Wait for file locks to release
+    
     // Delete all data from tables (safer than deleting file)
     if (fs.existsSync(dbPath)) {
       try {
-        // Try to delete all records using safe operation
+        // Open database with WAL mode disabled temporarily for better compatibility
         const tempDb = new Database(dbPath);
+        tempDb.pragma('journal_mode = DELETE'); // Disable WAL mode
         
-        // Delete all records from tables
-        tempDb.exec(`
-          DELETE FROM ping_history;
-          DELETE FROM ping_aggregates;
-        `);
+        // Use transaction for atomicity
+        const transaction = tempDb.transaction(() => {
+          // Delete all records from tables
+          tempDb.prepare('DELETE FROM ping_history').run();
+          tempDb.prepare('DELETE FROM ping_aggregates').run();
+        });
+        
+        transaction();
+        
+        // Verify deletion
+        const historyAfter = tempDb.prepare('SELECT COUNT(*) as count FROM ping_history').get();
+        const aggregatesAfter = tempDb.prepare('SELECT COUNT(*) as count FROM ping_aggregates').get();
+        
+        const afterCount = {
+          history: historyAfter?.count || 0,
+          aggregates: aggregatesAfter?.count || 0
+        };
+        
+        if (afterCount.history > 0 || afterCount.aggregates > 0) {
+          throw new Error(`Deletion incomplete: ${afterCount.history} history, ${afterCount.aggregates} aggregates still exist`);
+        }
         
         // Vacuum to reclaim space and optimize
         tempDb.exec('VACUUM');
         
         tempDb.close();
-        console.log('Database tables cleared and vacuumed');
+        console.log(`Database tables cleared: ${beforeCount.history} history and ${beforeCount.aggregates} aggregate records deleted`);
       } catch (error) {
         console.warn('Failed to clear tables, attempting file deletion:', error.message);
         
         // Fallback: delete the file and recreate
         try {
-          fs.unlinkSync(dbPath);
-          console.log('Database file deleted');
+          // Close any connections first
+          if (fs.existsSync(dbPath)) {
+            try {
+              const closeDb = new Database(dbPath);
+              closeDb.close();
+            } catch (e) {
+              // Ignore - file may already be locked or closed
+            }
+          }
           
-          // Remove any journal/WAL files
-          const journalPath = `${dbPath}-journal`;
-          const walPath = `${dbPath}-wal`;
-          const shmPath = `${dbPath}-shm`;
+          await waitForRelease(300);
           
-          [journalPath, walPath, shmPath].forEach(file => {
+          // Remove all related files
+          [dbPath, journalPath, walPath, shmPath].forEach(file => {
             if (fs.existsSync(file)) {
               try {
                 fs.unlinkSync(file);
+                console.log(`Deleted ${path.basename(file)}`);
               } catch (e) {
-                // Ignore errors
+                console.warn(`Could not delete ${path.basename(file)}:`, e.message);
               }
             }
           });
+          
+          console.log('Database file deleted - will be recreated on next connection');
         } catch (deleteError) {
           console.error('Failed to delete database file:', deleteError);
-          throw new Error('Failed to reset database');
+          throw new Error('Failed to reset database: ' + deleteError.message);
         }
       }
     }
     
     // Reinitialize database connection and schema
     db = null; // Force new connection
+    await waitForRelease(100);
     initDatabase();
+    
+    // Verify database is empty
+    const verifyDb = getDatabase();
+    const verifyHistory = verifyDb.prepare('SELECT COUNT(*) as count FROM ping_history').get();
+    const verifyAggregates = verifyDb.prepare('SELECT COUNT(*) as count FROM ping_aggregates').get();
+    
+    if ((verifyHistory?.count || 0) > 0 || (verifyAggregates?.count || 0) > 0) {
+      throw new Error('Database reset verification failed - data still exists');
+    }
+    
+    console.log('Database reset verified: 0 records remaining');
     
     // Clear status cache
     clearStatusCache();
@@ -691,6 +768,20 @@ function resetDatabase(createBackup = true) {
     db = null;
     throw error;
   }
+}
+
+// Get database statistics
+function getDatabaseStats() {
+  return safeDbOperation(() => {
+    const db = getDatabase();
+    const historyCount = db.prepare('SELECT COUNT(*) as count FROM ping_history').get();
+    const aggregatesCount = db.prepare('SELECT COUNT(*) as count FROM ping_aggregates').get();
+    
+    return {
+      pingHistory: historyCount?.count || 0,
+      aggregates: aggregatesCount?.count || 0
+    };
+  }, { pingHistory: 0, aggregates: 0 });
 }
 
 // Get device criticality ping intervals
@@ -716,6 +807,7 @@ module.exports = {
   getDevicePingInterval,
   generateAggregates,
   resetDatabase,
+  getDatabaseStats,
   CRITICALITY_INTERVALS
 };
 
