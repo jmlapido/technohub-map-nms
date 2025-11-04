@@ -12,18 +12,25 @@ const MAX_CONCURRENT_PINGS = 5;
 
 function formatLatencyForLog(latency) {
   if (typeof latency === 'number' && Number.isFinite(latency)) {
+    // For values less than 1ms, show decimal precision (e.g., 0.75ms, 0.20ms)
+    if (latency < 1 && latency > 0) {
+      return `${latency.toFixed(2)}ms`;
+    }
+
+    // For zero or negative values, show as 0.00ms
     if (latency <= 0) {
-      return 'sub 0ms';
+      return '0.00ms';
     }
 
-    if (latency < 1) {
-      return '<1ms';
-    }
+    // For values >= 1ms, show integer if whole number, otherwise 1 decimal place
+    const displayValue = Number.isInteger(latency)
+      ? latency.toString()
+      : latency.toFixed(1);
 
-    return `${latency}ms`;
+    return `${displayValue}ms`;
   }
 
-  return 'sub 0ms';
+  return '0.00ms';
 }
 
 function startMonitoring(config) {
@@ -130,7 +137,8 @@ async function pingDevice(device) {
     let packetLoss = undefined;
     
     if (result.alive) {
-      latency = Math.round(result.avg);
+      // Preserve decimal precision, especially for values less than 1ms
+      latency = parseFloat(result.avg);
       packetLoss = result.packetLoss ? parseFloat(result.packetLoss) : 0;
       
       // Apply device-specific thresholds if available, otherwise use global

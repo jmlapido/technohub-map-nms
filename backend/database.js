@@ -19,8 +19,10 @@ if (!fs.existsSync(dataDir)) {
 let db = null;
 
 // In-memory cache for status data
+// Cache only device statuses (raw data), not fully resolved status with names
+// This ensures names are always resolved from current config
 let statusCache = {
-  data: null,
+  deviceStatuses: null,
   timestamp: 0,
   maxAge: 30000 // 30 seconds
 };
@@ -187,7 +189,7 @@ function initDatabase() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         device_id TEXT NOT NULL,
         status TEXT NOT NULL,
-        latency INTEGER,
+        latency REAL,
         packet_loss REAL,
         timestamp INTEGER NOT NULL
       );
@@ -272,44 +274,50 @@ function getOfflineDuration(deviceId) {
 function getCurrentStatus(config, forceRefresh = false) {
   const now = Date.now();
   
-  // Return cached data if still valid
-  if (!forceRefresh && statusCache.data && (now - statusCache.timestamp) < statusCache.maxAge) {
-    return statusCache.data;
-  }
+  // Query database with corruption handling (or use cached device statuses)
+  let deviceStatuses = {};
+  let shouldRebuildCache = forceRefresh || !statusCache.deviceStatuses || (now - statusCache.timestamp) >= statusCache.maxAge;
   
-  // Query database with corruption handling
-  const results = safeDbOperation(() => {
-    const db = getDatabase();
-    const oneMonthAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+  if (shouldRebuildCache) {
+    const results = safeDbOperation(() => {
+      const db = getDatabase();
+      const oneMonthAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+      
+      // Get latest ping for each device (optimized query)
+      const stmt = db.prepare(`
+        SELECT device_id, status, latency, packet_loss, timestamp
+        FROM ping_history p1
+        WHERE timestamp > ? AND timestamp = (
+          SELECT MAX(timestamp) FROM ping_history p2 
+          WHERE p2.device_id = p1.device_id AND p2.timestamp > ?
+        )
+        ORDER BY device_id
+      `);
+      
+      return stmt.all(oneMonthAgo, oneMonthAgo);
+    }, []);
     
-    // Get latest ping for each device (optimized query)
-    const stmt = db.prepare(`
-      SELECT device_id, status, latency, packet_loss, timestamp
-      FROM ping_history p1
-      WHERE timestamp > ? AND timestamp = (
-        SELECT MAX(timestamp) FROM ping_history p2 
-        WHERE p2.device_id = p1.device_id AND p2.timestamp > ?
-      )
-      ORDER BY device_id
-    `);
+    // Group by device and get latest
+    if (results && Array.isArray(results)) {
+      results.forEach(row => {
+        if (!deviceStatuses[row.device_id]) {
+          deviceStatuses[row.device_id] = {
+            deviceId: row.device_id,
+            status: row.status,
+            latency: row.latency,
+            packetLoss: row.packet_loss,
+            lastChecked: new Date(row.timestamp).toISOString()
+          };
+        }
+      });
+    }
     
-    return stmt.all(oneMonthAgo, oneMonthAgo);
-  }, []);
-  
-  // Group by device and get latest
-  const deviceStatuses = {};
-  if (results && Array.isArray(results)) {
-    results.forEach(row => {
-      if (!deviceStatuses[row.device_id]) {
-        deviceStatuses[row.device_id] = {
-          deviceId: row.device_id,
-          status: row.status,
-          latency: row.latency,
-          packetLoss: row.packet_loss,
-          lastChecked: new Date(row.timestamp).toISOString()
-        };
-      }
-    });
+    // Cache device statuses for next time
+    statusCache.deviceStatuses = deviceStatuses;
+    statusCache.timestamp = now;
+  } else {
+    // Use cached device statuses, but always re-resolve names from current config
+    deviceStatuses = statusCache.deviceStatuses || {};
   }
   
   const areaMap = new Map(config.areas.map(area => [area.id, area]));
@@ -413,7 +421,7 @@ function getCurrentStatus(config, forceRefresh = false) {
       .filter(value => typeof value === 'number');
 
     const avgLatency = latencies.length > 0
-      ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length)
+      ? parseFloat((latencies.reduce((sum, value) => sum + value, 0) / latencies.length).toFixed(2))
       : undefined;
 
     const metadata = link.metadata && typeof link.metadata === 'object' ? link.metadata : {};
@@ -433,9 +441,9 @@ function getCurrentStatus(config, forceRefresh = false) {
     links: linkStatuses
   };
   
-  // Update cache
+  // Update cache with device statuses (not fully resolved data, so names are always fresh)
   statusCache = {
-    data: statusData,
+    deviceStatuses: deviceStatuses,
     timestamp: now,
     maxAge: 30000
   };
@@ -472,7 +480,7 @@ function getDeviceHistory(deviceId, period = '7d') {
       if (aggregateResults.length > 0) {
         return aggregateResults.map(row => ({
           status: row.uptime_percent > 90 ? 'up' : row.uptime_percent > 50 ? 'degraded' : 'down',
-          latency: Math.round(row.latency || 0),
+          latency: row.latency || 0,
           packetLoss: row.packet_loss || 0,
           timestamp: new Date(row.timestamp).toISOString(),
           isAggregated: true,
@@ -587,10 +595,102 @@ function cleanupOldData() {
 // Clear status cache
 function clearStatusCache() {
   statusCache = {
-    data: null,
+    deviceStatuses: null,
     timestamp: 0,
     maxAge: 30000
   };
+}
+
+// Safely reset database - clears all data and reinitializes schema
+function resetDatabase(createBackup = true) {
+  console.log('Starting database reset...');
+  
+  try {
+    // Close existing connection if any
+    if (db) {
+      try {
+        db.close();
+      } catch (e) {
+        console.warn('Error closing database connection:', e.message);
+      }
+      db = null;
+    }
+    
+    // Create backup if requested and database exists
+    if (createBackup && fs.existsSync(dbPath)) {
+      const backupPath = path.join(dataDir, `database-backup-${Date.now()}.sqlite`);
+      try {
+        fs.copyFileSync(dbPath, backupPath);
+        console.log(`Database backed up to: ${backupPath}`);
+      } catch (error) {
+        console.error('Failed to backup database:', error);
+        if (createBackup) {
+          throw new Error('Backup failed - aborting reset for safety');
+        }
+      }
+    }
+    
+    // Delete all data from tables (safer than deleting file)
+    if (fs.existsSync(dbPath)) {
+      try {
+        // Try to delete all records using safe operation
+        const tempDb = new Database(dbPath);
+        
+        // Delete all records from tables
+        tempDb.exec(`
+          DELETE FROM ping_history;
+          DELETE FROM ping_aggregates;
+        `);
+        
+        // Vacuum to reclaim space and optimize
+        tempDb.exec('VACUUM');
+        
+        tempDb.close();
+        console.log('Database tables cleared and vacuumed');
+      } catch (error) {
+        console.warn('Failed to clear tables, attempting file deletion:', error.message);
+        
+        // Fallback: delete the file and recreate
+        try {
+          fs.unlinkSync(dbPath);
+          console.log('Database file deleted');
+          
+          // Remove any journal/WAL files
+          const journalPath = `${dbPath}-journal`;
+          const walPath = `${dbPath}-wal`;
+          const shmPath = `${dbPath}-shm`;
+          
+          [journalPath, walPath, shmPath].forEach(file => {
+            if (fs.existsSync(file)) {
+              try {
+                fs.unlinkSync(file);
+              } catch (e) {
+                // Ignore errors
+              }
+            }
+          });
+        } catch (deleteError) {
+          console.error('Failed to delete database file:', deleteError);
+          throw new Error('Failed to reset database');
+        }
+      }
+    }
+    
+    // Reinitialize database connection and schema
+    db = null; // Force new connection
+    initDatabase();
+    
+    // Clear status cache
+    clearStatusCache();
+    
+    console.log('Database reset completed successfully');
+    return true;
+  } catch (error) {
+    console.error('Error resetting database:', error);
+    // Reset db variable on error to allow retry
+    db = null;
+    throw error;
+  }
 }
 
 // Get device criticality ping intervals
@@ -615,6 +715,7 @@ module.exports = {
   clearStatusCache,
   getDevicePingInterval,
   generateAggregates,
+  resetDatabase,
   CRITICALITY_INTERVALS
 };
 

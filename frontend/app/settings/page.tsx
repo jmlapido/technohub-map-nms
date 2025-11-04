@@ -1604,12 +1604,36 @@ function AreaModal({ area, onSave, onClose }: { area: Area | null, onSave: (area
 function DeviceModal({ device, areas, onSave, onClose }: { device: Device | null, areas: Area[], onSave: (device: Device) => void, onClose: () => void }) {
   const [formData, setFormData] = useState<Device>(device || {
     id: '',
-    areaId: areas[0]?.id || '',
+    areaId: device?.areaId || areas[0]?.id || '',
     name: '',
     type: 'router',
     ip: '',
     criticality: 'normal'
   })
+
+  // Update form data when device prop changes (important for area-specific device creation)
+  useEffect(() => {
+    if (device) {
+      setFormData({
+        id: device.id || '',
+        areaId: device.areaId || areas[0]?.id || '',
+        name: device.name || '',
+        type: device.type || 'router',
+        ip: device.ip || '',
+        criticality: device.criticality || 'normal'
+      })
+    } else {
+      // Reset to defaults when creating new device
+      setFormData({
+        id: '',
+        areaId: areas[0]?.id || '',
+        name: '',
+        type: 'router',
+        ip: '',
+        criticality: 'normal'
+      })
+    }
+  }, [device, areas])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()

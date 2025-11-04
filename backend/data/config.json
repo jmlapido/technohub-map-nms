@@ -47,6 +47,14 @@
       "type": "wifi-soho",
       "ip": "9.9.9.9",
       "criticality": "normal"
+    },
+    {
+      "id": "device-1762252617373",
+      "areaId": "area-1",
+      "name": "test",
+      "type": "router",
+      "ip": "8.8.4.4",
+      "criticality": "normal"
     }
   ],
   "links": [

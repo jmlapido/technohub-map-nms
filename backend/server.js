@@ -2,7 +2,7 @@
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-const { initDatabase, getCurrentStatus, clearStatusCache } = require('./database');
+const { initDatabase, getCurrentStatus, clearStatusCache, resetDatabase } = require('./database');
 const { startMonitoring, restartMonitoring } = require('./monitor');
 const archiver = require('archiver');
 const multer = require('multer');
@@ -401,17 +401,19 @@ app.get('/api/health', (req, res) => {
 // Combined dashboard endpoint (status + public config)
 app.get('/api/dashboard', (req, res) => {
   try {
-    const status = getCurrentStatus(config);
+    // Always use fresh config to ensure names are resolved correctly
+    const freshConfig = loadConfig(configPath);
+    const status = getCurrentStatus(freshConfig);
     const publicConfig = {
-      areas: config.areas || [],
-      links: config.links || [],
-      devices: (config.devices || []).map(device => ({
+      areas: freshConfig.areas || [],
+      links: freshConfig.links || [],
+      devices: (freshConfig.devices || []).map(device => ({
         ...device,
         // Include criticality in public config for UI
         criticality: device.criticality || 'normal'
       })),
       settings: {
-        topology: (config.settings && config.settings.topology) || {
+        topology: (freshConfig.settings && freshConfig.settings.topology) || {
           showRemoteAreas: true,
           showLinkLatency: true,
           preferCompactLayout: false,
@@ -445,7 +447,9 @@ app.get('/api/dashboard', (req, res) => {
 // Legacy status endpoint (kept for backward compatibility)
 app.get('/api/status', (req, res) => {
   try {
-    const status = getCurrentStatus(config);
+    // Always use fresh config to ensure names are resolved correctly
+    const freshConfig = loadConfig(configPath);
+    const status = getCurrentStatus(freshConfig);
     res.json(status);
   } catch (error) {
     console.error('Error fetching status:', error);
@@ -711,6 +715,32 @@ app.post('/api/import', upload.single('backup'), async (req, res) => {
     
     res.status(500).json({ 
       error: 'Failed to import data', 
+      details: error.message 
+    });
+  }
+});
+
+// Reset database - clears all ping history data
+app.post('/api/database/reset', (req, res) => {
+  try {
+    const { createBackup = true } = req.body; // Default to creating backup for safety
+    
+    // Reset the database
+    resetDatabase(createBackup);
+    
+    // Clear status cache
+    clearStatusCache();
+    
+    res.json({ 
+      success: true, 
+      message: 'Database reset successfully',
+      backupCreated: createBackup,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Database reset error:', error);
+    res.status(500).json({ 
+      error: 'Failed to reset database', 
       details: error.message 
     });
   }
