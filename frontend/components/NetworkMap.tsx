@@ -9,7 +9,7 @@ import { formatLatency } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Activity, Wifi, WifiOff, AlertTriangle, X, Home, ShoppingBag, GraduationCap, Router, Radio, Satellite, Map as MapIcon, ChevronDown, ChevronUp } from 'lucide-react'
+import { Activity, Wifi, WifiOff, AlertTriangle, X, Home, ShoppingBag, GraduationCap, Router, Radio, Satellite, Map as MapIcon, ChevronDown, ChevronUp, Network, ChevronRight } from 'lucide-react'
 
 // Fix for default marker icons in React-Leaflet
 delete (L.Icon.Default.prototype as Record<string, unknown>)._getIconUrl
@@ -29,6 +29,7 @@ interface NetworkMapProps {
 
 export default function NetworkMap({ status, config, onRefresh, isRefreshing = false, errorMessage }: NetworkMapProps) {
   const [selectedArea, setSelectedArea] = useState<AreaStatus | null>(null)
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
   const [bounds, setBounds] = useState<L.LatLngBounds | null>(null)
   const [statusPanelMaximized, setStatusPanelMaximized] = useState(false)
   const [mapView, setMapView] = useState<'street' | 'satellite'>('street')
@@ -404,6 +405,12 @@ export default function NetworkMap({ status, config, onRefresh, isRefreshing = f
     remote: ResolvedLinkEndpoint
   }
 
+  interface DeviceConnection {
+    link: ResolvedLinkData
+    remote: ResolvedLinkEndpoint
+    localEndpoint: ResolvedLinkEndpoint
+  }
+
   const areaConnections = useMemo(() => {
     if (!selectedArea) return [] as AreaConnection[]
 
@@ -421,6 +428,26 @@ export default function NetworkMap({ status, config, onRefresh, isRefreshing = f
       })
       .filter((value): value is AreaConnection => value !== null)
   }, [resolvedLinks, selectedArea])
+
+  const deviceConnections = useMemo(() => {
+    if (!selectedDeviceId) return [] as DeviceConnection[]
+
+    return resolvedLinks
+      .map(link => {
+        const localIndex = link.endpoints.findIndex(endpoint => endpoint.deviceId === selectedDeviceId)
+        if (localIndex === -1) return null
+        const remoteIndex = localIndex === 0 ? 1 : 0
+        const localEndpoint = link.endpoints[localIndex]
+        const remoteEndpoint = link.endpoints[remoteIndex]
+
+        return {
+          link,
+          remote: remoteEndpoint,
+          localEndpoint
+        } as DeviceConnection
+      })
+      .filter((value): value is DeviceConnection => value !== null)
+  }, [resolvedLinks, selectedDeviceId])
 
   const getAreaTypeIcon = (type: string) => {
     switch (type) {
@@ -568,6 +595,7 @@ export default function NetworkMap({ status, config, onRefresh, isRefreshing = f
               eventHandlers={{
                 click: () => {
                   setSelectedArea(areaStatus || null)
+                  setSelectedDeviceId(null) // Close device connections when selecting new area
                 },
                 mouseover: () => {
                   setSelectedArea(areaStatus || null)
@@ -660,7 +688,13 @@ export default function NetworkMap({ status, config, onRefresh, isRefreshing = f
 
         {/* Area details panel */}
         {selectedArea && (
-          <div className="absolute top-12 right-2 lg:top-16 lg:right-4 z-[1000] max-w-[calc(100vw-1rem)] lg:max-w-sm w-full max-h-[calc(85vh-3rem)] lg:max-h-[calc(80vh-3rem)] overflow-auto">
+          <div 
+            className={`absolute top-12 z-[1000] max-w-[calc(100vw-1rem)] lg:max-w-sm w-full max-h-[calc(85vh-3rem)] lg:max-h-[calc(80vh-3rem)] overflow-auto transition-all duration-300 ease-in-out ${
+              selectedDeviceId 
+                ? 'right-[calc(100vw-1rem-24rem+0.5rem)] lg:right-[calc(100%-30rem)]' 
+                : 'right-2 lg:right-4'
+            }`}
+          >
             <Card>
               <CardHeader className="p-4 lg:p-6">
                 <div className="flex items-start justify-between gap-2">
@@ -701,11 +735,16 @@ export default function NetworkMap({ status, config, onRefresh, isRefreshing = f
                   <h4 className="text-xs lg:text-sm font-semibold">Devices:</h4>
                   {selectedArea.devices.map((device, idx) => {
                     const deviceInfo = config.devices.find(d => d.id === device.deviceId)
+                    // Check if this device has connections
+                    const hasConnections = resolvedLinks.some(link => 
+                      link.endpoints.some(endpoint => endpoint.deviceId === device.deviceId)
+                    )
+                    
                     return (
                       <div key={idx} className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 p-2 bg-muted rounded-md">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-1">
                           {getDeviceTypeIcon(deviceInfo?.type || 'router')}
-                          <div>
+                          <div className="flex-1">
                             <div className="font-medium text-xs lg:text-sm">{deviceInfo?.name || device.deviceId}</div>
                             <div className="text-xs text-muted-foreground">{deviceInfo?.ip}</div>
                           </div>
@@ -721,20 +760,66 @@ export default function NetworkMap({ status, config, onRefresh, isRefreshing = f
                           >
                             {device.status === 'up' ? 'online' : device.status}
                           </Badge>
+                          {hasConnections && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                // Toggle: if same device is open, close it; otherwise open this device (closing previous)
+                                setSelectedDeviceId(device.deviceId === selectedDeviceId ? null : device.deviceId)
+                              }}
+                              className={`h-7 w-7 p-0 hover:bg-primary/10 ${
+                                device.deviceId === selectedDeviceId ? 'bg-primary/10' : ''
+                              }`}
+                              title="View connections"
+                              aria-label="View device connections"
+                            >
+                              <Network className={`h-4 w-4 ${device.deviceId === selectedDeviceId ? 'text-primary' : 'text-muted-foreground'}`} />
+                            </Button>
+                          )}
                         </div>
                       </div>
                     )
                   })}
                 </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
-                {areaConnections.length > 0 && (
+        {/* Device connections panel */}
+        {selectedDeviceId && (
+          <div className="absolute top-12 right-2 lg:top-16 lg:right-4 z-[1001] max-w-[calc(100vw-1rem)] lg:max-w-sm w-full max-h-[calc(85vh-3rem)] lg:max-h-[calc(80vh-3rem)] overflow-auto transition-all duration-300">
+            <Card>
+              <CardHeader className="p-4 lg:p-6">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1">
+                    <CardTitle className="text-base lg:text-lg">Device Connections</CardTitle>
+                    <CardDescription className="text-xs lg:text-sm">
+                      {config.devices.find(d => d.id === selectedDeviceId)?.name || selectedDeviceId}
+                    </CardDescription>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setSelectedDeviceId(null)}
+                    className="h-8 w-8 shrink-0"
+                    aria-label="Close panel"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3 p-4 lg:p-6 pt-0">
+                {deviceConnections.length > 0 ? (
                   <div className="space-y-2">
-                    <h4 className="text-xs lg:text-sm font-semibold">Connections:</h4>
-                    {areaConnections.map(connection => {
-                      const { link, remote } = connection
+                    {deviceConnections.map(connection => {
+                      const { link, remote, localEndpoint } = connection
+                      const deviceInfo = config.devices.find(d => d.id === selectedDeviceId)
 
                       const remoteName = remote.deviceName || remote.areaName || 'Unknown endpoint'
-                      const interfaceLabel = remote.interface || remote.interfaceType || 'link'
+                      const interfaceLabel = localEndpoint.interface || localEndpoint.interfaceType || 'link'
+                      const remoteInterfaceLabel = remote.interface || remote.interfaceType
 
                       return (
                         <div key={link.id} className="p-2 bg-muted rounded-md space-y-1">
@@ -757,20 +842,32 @@ export default function NetworkMap({ status, config, onRefresh, isRefreshing = f
                             </Badge>
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            ↳ Connected to <span className="font-semibold text-foreground">{remoteName}</span>
+                            <span className="font-semibold text-foreground">{deviceInfo?.name || selectedDeviceId}</span>
                             {interfaceLabel && (
                               <span className="ml-1 text-muted-foreground">({interfaceLabel})</span>
+                            )}
+                            {' → '}
+                            <span className="font-semibold text-foreground">{remoteName}</span>
+                            {remoteInterfaceLabel && (
+                              <span className="ml-1 text-muted-foreground">({remoteInterfaceLabel})</span>
                             )}
                           </div>
                           <div className="text-xs text-muted-foreground">
                             Average latency: {formatLatency(link.latency)}
                           </div>
-                          <div className="text-xs text-muted-foreground">
-                            Last measured: {formatLatency(remote.latency)}
-                          </div>
+                          {remote.latency !== undefined && (
+                            <div className="text-xs text-muted-foreground">
+                              Last measured: {formatLatency(remote.latency)}
+                            </div>
+                          )}
                         </div>
                       )
                     })}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Network className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                    <p className="text-sm">No connections found for this device</p>
                   </div>
                 )}
               </CardContent>

@@ -146,13 +146,17 @@ api.interceptors.request.use((config) => {
     lastApiCall[requestKey] = now
   }
   
-  // Add ETag for caching
-  const etag = etagCache[requestKey]
-  if (etag && (config.url?.includes('/api/dashboard') || config.url?.includes('/api/config/public'))) {
+  // Add ETag for caching (unless explicitly bypassing cache)
+  const bypassCache = config.headers?.['Cache-Control'] === 'no-cache' || config.headers?.['If-None-Match'] === ''
+  const etag = bypassCache ? undefined : etagCache[requestKey]
+  if (etag && !bypassCache && (config.url?.includes('/api/dashboard') || config.url?.includes('/api/config/public'))) {
     config.headers['If-None-Match'] = etag
+  } else if (bypassCache) {
+    // Ensure ETag header is removed when bypassing cache
+    delete config.headers['If-None-Match']
   }
   
-  console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}${etag ? ' (with ETag)' : ''}`)
+  console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}${etag && !bypassCache ? ' (with ETag)' : bypassCache ? ' (bypassing cache)' : ''}`)
   
   // Add authentication token to protected routes
   const needsAuth = config.url?.includes('/api/config') || config.url?.includes('/api/export') || config.url?.includes('/api/import') || config.url?.includes('/api/auth/change-password')
@@ -169,9 +173,10 @@ api.interceptors.request.use((config) => {
 // Enhanced response interceptor with ETag caching
 api.interceptors.response.use(
   (response) => {
-    // Cache ETag for future requests
+    // Cache ETag for future requests (only if not bypassing cache)
+    const bypassCache = response.config.headers?.['Cache-Control'] === 'no-cache' || response.config.headers?.['If-None-Match'] === ''
     const etag = response.headers.etag || response.headers.ETag
-    if (etag) {
+    if (etag && !bypassCache) {
       const requestKey = `${response.config.method?.toUpperCase()}_${response.config.url}`
       etagCache[requestKey] = etag
     }
@@ -693,8 +698,13 @@ export const networkApi = {
       // Handle 304 Not Modified - force fresh fetch
       if (response.notModified || !response.data) {
         console.warn('[API] Config response was 304 or empty, forcing fresh fetch...')
-        // Remove ETag header to force fresh fetch
-        const freshResponse = await api.get('/api/config/public', {
+        // Clear ETag cache and force fresh fetch
+        const requestKey = 'GET:/api/config/public'
+        const requestKeyAlt = 'GET_/api/config/public'
+        delete etagCache[requestKey]
+        delete etagCache[requestKeyAlt]
+        // Use cache-busting query parameter to ensure fresh data
+        const freshResponse = await api.get(`/api/config/public?_t=${Date.now()}`, {
           headers: { 'If-None-Match': '', 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
         })
         console.log('[API getPublicConfig] Fresh fetch result:', {
@@ -716,8 +726,19 @@ export const networkApi = {
       // Handle 304 errors specifically
       if (error.needsFreshFetch || error.response?.status === 304) {
         console.warn('[API] Got 304, forcing fresh fetch without cache headers...')
-        const freshResponse = await api.get('/api/config/public', {
+        // Clear ETag cache to prevent infinite loop
+        const requestKey = 'GET:/api/config/public'
+        const requestKeyAlt = 'GET_/api/config/public'
+        delete etagCache[requestKey]
+        delete etagCache[requestKeyAlt]
+        // Use cache-busting query parameter to ensure fresh data
+        const freshResponse = await api.get(`/api/config/public?_t=${Date.now()}`, {
           headers: { 'If-None-Match': '', 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
+        })
+        console.log('[API getPublicConfig] Fresh fetch after 304:', {
+          hasData: !!freshResponse.data,
+          areasCount: freshResponse.data?.areas?.length || 0,
+          devicesCount: freshResponse.data?.devices?.length || 0
         })
         return normalizePartialConfig(freshResponse.data)
       }
