@@ -516,16 +516,20 @@ app.get('/api/config', (req, res) => {
 
 app.get('/api/config/public', (req, res) => {
   try {
+    // Always use fresh config to ensure data is up-to-date
+    const freshConfig = loadConfig(configPath);
+    console.log(`[API /config/public] Config loaded: ${freshConfig.areas.length} areas, ${freshConfig.devices.length} devices`);
+    
     // Return only public config with device criticality
     const publicConfig = {
-      areas: config.areas || [],
-      links: config.links || [],
-      devices: (config.devices || []).map(device => ({
+      areas: freshConfig.areas || [],
+      links: freshConfig.links || [],
+      devices: (freshConfig.devices || []).map(device => ({
         ...device,
         criticality: device.criticality || 'normal'
       })),
       settings: {
-        topology: (config.settings && config.settings.topology) || {
+        topology: (freshConfig.settings && freshConfig.settings.topology) || {
           showRemoteAreas: true,
           showLinkLatency: true,
           preferCompactLayout: false,
@@ -535,8 +539,13 @@ app.get('/api/config/public', (req, res) => {
       lastUpdated: new Date().toISOString()
     };
     
+    // Validate config is not empty
+    if (publicConfig.areas.length === 0 && publicConfig.devices.length === 0) {
+      console.warn(`[API /config/public] ⚠️ Warning: Config is empty! Areas: ${freshConfig.areas.length}, Devices: ${freshConfig.devices.length}`);
+    }
+    
     // Add caching headers
-    res.set('Cache-Control', 'public, max-age=60'); // Cache for 1 minute
+    res.set('Cache-Control', 'public, max-age=30'); // Reduced cache time to 30 seconds
     
     // Generate ETag for better caching
     const etag = `"${Buffer.from(JSON.stringify(publicConfig)).toString('base64').slice(0, 16)}"`;

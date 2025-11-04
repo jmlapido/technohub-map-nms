@@ -183,7 +183,11 @@ api.interceptors.response.use(
     
     // Handle 304 Not Modified responses
     if (error.response?.status === 304) {
-      console.log('Content not modified (304), using cached data')
+      console.log('Content not modified (304), but we need fresh data - will retry')
+      // Don't return cached data for config endpoints - force fresh fetch
+      if (config.url?.includes('/api/config/public') || config.url?.includes('/api/config')) {
+        return Promise.reject({ ...error, needsFreshFetch: true })
+      }
       // Return empty response - the caller should handle this
       return Promise.resolve({ ...error.response, data: null, notModified: true })
     }
@@ -684,8 +688,41 @@ export const networkApi = {
   },
   
   getPublicConfig: async (): Promise<Pick<Config, 'areas' | 'links' | 'devices' | 'settings'>> => {
-    const { data } = await api.get('/api/config/public')
-    return normalizePartialConfig(data)
+    try {
+      const response = await api.get('/api/config/public')
+      // Handle 304 Not Modified - force fresh fetch
+      if (response.notModified || !response.data) {
+        console.warn('[API] Config response was 304 or empty, forcing fresh fetch...')
+        // Remove ETag header to force fresh fetch
+        const freshResponse = await api.get('/api/config/public', {
+          headers: { 'If-None-Match': '', 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
+        })
+        console.log('[API getPublicConfig] Fresh fetch result:', {
+          hasData: !!freshResponse.data,
+          areasCount: freshResponse.data?.areas?.length || 0,
+          devicesCount: freshResponse.data?.devices?.length || 0
+        })
+        return normalizePartialConfig(freshResponse.data)
+      }
+      const { data } = response
+      console.log('[API getPublicConfig] Received config data:', {
+        hasData: !!data,
+        areasCount: data?.areas?.length || 0,
+        devicesCount: data?.devices?.length || 0,
+        linksCount: data?.links?.length || 0
+      })
+      return normalizePartialConfig(data)
+    } catch (error: any) {
+      // Handle 304 errors specifically
+      if (error.needsFreshFetch || error.response?.status === 304) {
+        console.warn('[API] Got 304, forcing fresh fetch without cache headers...')
+        const freshResponse = await api.get('/api/config/public', {
+          headers: { 'If-None-Match': '', 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
+        })
+        return normalizePartialConfig(freshResponse.data)
+      }
+      throw error
+    }
   },
   
   updateConfig: async (config: Partial<Config>): Promise<{ success: boolean; invalidLinksRemoved?: number; message?: string }> => {
