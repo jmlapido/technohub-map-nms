@@ -335,12 +335,35 @@ export default function NetworkMap({ status, config, onRefresh, isRefreshing = f
 
       const status = statusEndpoint?.status ?? statusInfo?.status ?? endpoint.status ?? 'unknown'
 
+      const resolvedAreaName = area?.name ?? statusEndpoint?.areaName ?? endpoint.areaName;
+      const resolvedDeviceName = device?.name ?? statusEndpoint?.deviceName ?? endpoint.deviceName;
+      
+      // Debug logging for name resolution in NetworkMap
+      if (endpoint.areaId && !resolvedAreaName) {
+        console.warn(`[NetworkMap] ⚠️ Area ID "${endpoint.areaId}" not resolved:`, {
+          areaFromMap: area?.name,
+          statusEndpointAreaName: statusEndpoint?.areaName,
+          endpointAreaName: endpoint.areaName,
+          areaMapHas: areaMap.has(endpoint.areaId),
+          linkId: link.id
+        });
+      }
+      if (endpoint.deviceId && !resolvedDeviceName) {
+        console.warn(`[NetworkMap] ⚠️ Device ID "${endpoint.deviceId}" not resolved:`, {
+          deviceFromMap: device?.name,
+          statusEndpointDeviceName: statusEndpoint?.deviceName,
+          endpointDeviceName: endpoint.deviceName,
+          deviceMapHas: deviceMap.has(endpoint.deviceId),
+          linkId: link.id
+        });
+      }
+      
       return {
         ...endpoint,
         area,
         device,
-        areaName: area?.name ?? statusEndpoint?.areaName ?? endpoint.areaName,
-        deviceName: device?.name ?? statusEndpoint?.deviceName ?? endpoint.deviceName,
+        areaName: resolvedAreaName,
+        deviceName: resolvedDeviceName,
         interface: endpoint.interface ?? statusEndpoint?.interface ?? null,
         interfaceType: endpoint.interfaceType ?? statusEndpoint?.interfaceType ?? statusInfo?.type ?? null,
         label: endpoint.label ?? statusEndpoint?.label ?? null,

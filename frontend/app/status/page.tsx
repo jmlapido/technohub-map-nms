@@ -226,12 +226,45 @@ export default function StatusPage() {
   const loadData = async () => {
     const startTime = Date.now();
     try {
+      console.log('[StatusPage] Loading data...');
       const [statusData, configData] = await Promise.all([
         networkApi.getStatus(),
         networkApi.getPublicConfig()
       ])
       const duration = Date.now() - startTime;
       console.log(`✅ Status loaded in ${duration}ms`);
+      
+      // Debug: Check for null names in status data
+      console.log('[StatusPage] Config loaded:', {
+        areas: configData.areas.length,
+        devices: configData.devices.length,
+        links: configData.links.length
+      });
+      console.log('[StatusPage] Config areas:', configData.areas.map(a => ({ id: a.id, name: a.name })));
+      console.log('[StatusPage] Config devices:', configData.devices.map(d => ({ id: d.id, name: d.name, areaId: d.areaId })));
+      
+      if (statusData.links) {
+        const linksWithNullNames = statusData.links.filter(link => 
+          link.endpoints?.some(ep => (ep.areaId && !ep.areaName) || (ep.deviceId && !ep.deviceName))
+        );
+        if (linksWithNullNames.length > 0) {
+          console.warn(`[StatusPage] ⚠️ ${linksWithNullNames.length} links have null names in API response:`);
+          linksWithNullNames.forEach(link => {
+            link.endpoints?.forEach((ep, idx) => {
+              if ((ep.areaId && !ep.areaName) || (ep.deviceId && !ep.deviceName)) {
+                console.warn(`[StatusPage]   - Link ${link.linkId}, endpoint ${idx}:`, {
+                  areaId: ep.areaId,
+                  areaName: ep.areaName,
+                  deviceId: ep.deviceId,
+                  deviceName: ep.deviceName,
+                  configHasArea: configData.areas.some(a => a.id === ep.areaId),
+                  configHasDevice: configData.devices.some(d => d.id === ep.deviceId)
+                });
+              }
+            });
+          });
+        }
+      }
       
       // Show success toast for slow loads
       if (duration > 2000) {
@@ -993,7 +1026,7 @@ function AreaTopology({ area, config, linkStatusMap, topologySettings }: AreaTop
   const ensureNode = (endpoint: NetworkLinkStatus['endpoints'][number] | undefined, fallbackLabel: string): PathNode => {
     const areaId = endpoint?.areaId ?? null
     const deviceId = endpoint?.deviceId ?? null
-    const areaName = getAreaName(areaId, null)
+    const areaName = getAreaName(areaId, endpoint?.areaName ?? null)
     const isLocalArea = areaId === area.areaId
 
     let label = fallbackLabel
@@ -1001,9 +1034,31 @@ function AreaTopology({ area, config, linkStatusMap, topologySettings }: AreaTop
     const variant: DeviceChipProps['variant'] = isLocalArea ? 'local' : 'remote'
     let status: NetworkLinkStatus['status'] | DeviceStatus['status'] | 'unknown' = endpoint?.status ?? 'unknown'
 
+    // Debug logging for name resolution
+    if (deviceId && (!endpoint?.deviceName || !deviceInfoMap.get(deviceId)?.name)) {
+      console.warn(`[StatusPage ensureNode] Device ID "${deviceId}" name resolution:`, {
+        endpointDeviceName: endpoint?.deviceName,
+        deviceInfoMapHas: deviceInfoMap.has(deviceId),
+        deviceInfoName: deviceInfoMap.get(deviceId)?.name,
+        configHasDevice: config?.devices.some(d => d.id === deviceId),
+        fallbackDeviceName: config?.devices.find(d => d.id === deviceId)?.name
+      });
+    }
+
     if (deviceId) {
       const deviceInfo = deviceInfoMap.get(deviceId)
-      label = deviceInfo?.name || endpoint?.deviceName || deviceId
+      // Try multiple fallbacks: deviceInfo name, endpoint deviceName, or look up from config
+      const resolvedDeviceName = deviceInfo?.name || endpoint?.deviceName
+      if (!resolvedDeviceName && config) {
+        // Last resort: try to find device in config by ID
+        const fallbackDevice = config.devices.find(d => d.id === deviceId)
+        label = fallbackDevice?.name || deviceId
+        if (!fallbackDevice) {
+          console.warn(`[StatusPage ensureNode] ⚠️ Device ID "${deviceId}" not found anywhere, using ID as label`);
+        }
+      } else {
+        label = resolvedDeviceName || deviceId
+      }
       if (isLocalArea) {
         subtitle = deviceInfo?.ip ?? undefined
         status = deviceStatusMap.get(deviceId)?.status ?? status
@@ -1014,6 +1069,26 @@ function AreaTopology({ area, config, linkStatusMap, topologySettings }: AreaTop
     } else if (areaName) {
       label = isLocalArea ? areaName : `[${areaName}]`
       if (!isLocalArea) subtitle = areaName
+    } else if (areaId && config) {
+      // Fallback: try to resolve area name from config if areaName is null
+      const fallbackArea = config.areas.find(a => a.id === areaId)
+      if (fallbackArea) {
+        label = isLocalArea ? fallbackArea.name : `[${fallbackArea.name}]`
+        if (!isLocalArea) subtitle = fallbackArea.name
+        console.log(`[StatusPage ensureNode] ✓ Area ID "${areaId}" resolved from config to "${fallbackArea.name}"`);
+      } else {
+        label = areaId // Last resort: show ID
+        console.warn(`[StatusPage ensureNode] ⚠️ Area ID "${areaId}" not found anywhere:`, {
+          endpointAreaName: endpoint?.areaName,
+          areaNameFromGetAreaName: areaName,
+          configAreaIds: config.areas.map(a => a.id),
+          configHasArea: config.areas.some(a => a.id === areaId)
+        });
+      }
+    } else if (areaId) {
+      // No config available, but we have areaId - show ID
+      label = areaId
+      console.warn(`[StatusPage ensureNode] ⚠️ Area ID "${areaId}" but no config available`);
     }
 
     const key = deviceId ? `device:${deviceId}` : `area:${areaId ?? label}`

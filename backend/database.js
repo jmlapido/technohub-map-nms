@@ -322,6 +322,11 @@ function getCurrentStatus(config, forceRefresh = false) {
   
   const areaMap = new Map(config.areas.map(area => [area.id, area]));
   const deviceMap = new Map(config.devices.map(device => [device.id, device]));
+  
+  // Debug: Log config summary
+  console.log(`[getCurrentStatus] Config loaded: ${config.areas.length} areas, ${config.devices.length} devices`);
+  console.log(`[getCurrentStatus] Area IDs in config:`, Array.from(areaMap.keys()));
+  console.log(`[getCurrentStatus] Device IDs in config:`, Array.from(deviceMap.keys()));
 
   // Build area status
   const areaStatuses = config.areas.map(area => {
@@ -362,7 +367,24 @@ function getCurrentStatus(config, forceRefresh = false) {
   const areaStatusMap = new Map(areaStatuses.map(areaStatus => [areaStatus.areaId, areaStatus]));
 
   // Build link status with device-level awareness
-  const linkStatuses = config.links.map(link => {
+  // Filter out links that reference areas/devices not in current config
+  const validLinks = config.links.filter(link => {
+    const rawEndpoints = Array.isArray(link.endpoints) ? link.endpoints.slice(0, 2) : [];
+    const fallbackAreaIdA = link.from || (rawEndpoints[0]?.areaId || null);
+    const fallbackAreaIdB = link.to || (rawEndpoints[1]?.areaId || null);
+    
+    // Check if both endpoints have valid area references
+    const areaAValid = !fallbackAreaIdA || areaMap.has(fallbackAreaIdA);
+    const areaBValid = !fallbackAreaIdB || areaMap.has(fallbackAreaIdB);
+    
+    // If endpoints have device IDs, check they exist in config
+    const deviceAValid = !rawEndpoints[0]?.deviceId || deviceMap.has(rawEndpoints[0].deviceId);
+    const deviceBValid = !rawEndpoints[1]?.deviceId || deviceMap.has(rawEndpoints[1]?.deviceId);
+    
+    return areaAValid && areaBValid && deviceAValid && deviceBValid;
+  });
+  
+  const linkStatuses = validLinks.map(link => {
     const rawEndpoints = Array.isArray(link.endpoints) ? link.endpoints.slice(0, 2) : [];
     while (rawEndpoints.length < 2) {
       rawEndpoints.push({});
@@ -378,11 +400,46 @@ function getCurrentStatus(config, forceRefresh = false) {
       const deviceStatus = device ? deviceStatuses[device.id] : null;
       const status = deviceStatus?.status || (areaId ? areaStatusMap.get(areaId)?.status || 'unknown' : 'unknown');
 
+      // Ensure names are always resolved - if lookup fails, log warning but don't return null
+      const areaName = area?.name || null;
+      const deviceName = device?.name || null;
+      
+      // Detailed debugging for name resolution
+      if (areaId) {
+        if (!areaName) {
+          console.warn(`[getCurrentStatus] ⚠️ Area ID "${areaId}" not found in config map`);
+          console.warn(`[getCurrentStatus]   - Link ID: ${link.id}`);
+          console.warn(`[getCurrentStatus]   - Endpoint index: ${index}`);
+          console.warn(`[getCurrentStatus]   - Available area IDs:`, Array.from(areaMap.keys()));
+          console.warn(`[getCurrentStatus]   - Area map size: ${areaMap.size}`);
+          if (areaMap.size > 0) {
+            console.warn(`[getCurrentStatus]   - Sample area from map:`, Array.from(areaMap.values())[0]);
+          }
+        } else {
+          console.log(`[getCurrentStatus] ✓ Area "${areaId}" resolved to "${areaName}"`);
+        }
+      }
+      
+      if (deviceId) {
+        if (!deviceName) {
+          console.warn(`[getCurrentStatus] ⚠️ Device ID "${deviceId}" not found in config map`);
+          console.warn(`[getCurrentStatus]   - Link ID: ${link.id}`);
+          console.warn(`[getCurrentStatus]   - Endpoint index: ${index}`);
+          console.warn(`[getCurrentStatus]   - Available device IDs:`, Array.from(deviceMap.keys()));
+          console.warn(`[getCurrentStatus]   - Device map size: ${deviceMap.size}`);
+          if (deviceMap.size > 0) {
+            console.warn(`[getCurrentStatus]   - Sample device from map:`, Array.from(deviceMap.values())[0]);
+          }
+        } else {
+          console.log(`[getCurrentStatus] ✓ Device "${deviceId}" resolved to "${deviceName}"`);
+        }
+      }
+
       return {
         areaId,
-        areaName: area?.name || null,
+        areaName: areaName,
         deviceId,
-        deviceName: device?.name || null,
+        deviceName: deviceName,
         status,
         latency: deviceStatus?.latency,
         packetLoss: deviceStatus?.packetLoss,

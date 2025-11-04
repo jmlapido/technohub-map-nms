@@ -52,10 +52,13 @@ app.use((req, res, next) => {
 // Helper functions
 function loadConfig(configPath = path.join(__dirname, 'data', 'config.json')) {
   let rawConfig;
+  console.log(`[loadConfig] Loading config from: ${configPath}`);
+  console.log(`[loadConfig] Config file exists: ${fs.existsSync(configPath)}`);
 
   if (fs.existsSync(configPath)) {
     const data = fs.readFileSync(configPath, 'utf8');
     rawConfig = JSON.parse(data);
+    console.log(`[loadConfig] Config loaded: ${rawConfig.areas?.length || 0} areas, ${rawConfig.devices?.length || 0} devices, ${rawConfig.links?.length || 0} links`);
   } else {
     // Default configuration (device-aware links)
     rawConfig = {
@@ -447,9 +450,30 @@ app.get('/api/dashboard', (req, res) => {
 // Legacy status endpoint (kept for backward compatibility)
 app.get('/api/status', (req, res) => {
   try {
+    console.log(`[API /status] Request received at ${new Date().toISOString()}`);
     // Always use fresh config to ensure names are resolved correctly
     const freshConfig = loadConfig(configPath);
+    console.log(`[API /status] Config loaded: ${freshConfig.areas.length} areas, ${freshConfig.devices.length} devices`);
+    console.log(`[API /status] Config areas:`, freshConfig.areas.map(a => ({ id: a.id, name: a.name })));
+    console.log(`[API /status] Config devices:`, freshConfig.devices.map(d => ({ id: d.id, name: d.name, areaId: d.areaId })));
     const status = getCurrentStatus(freshConfig);
+    
+    // Debug: Check for null names in response
+    const linksWithNullNames = status.links.filter(link => 
+      link.endpoints.some(ep => !ep.areaName && ep.areaId) || 
+      link.endpoints.some(ep => !ep.deviceName && ep.deviceId)
+    );
+    if (linksWithNullNames.length > 0) {
+      console.warn(`[API /status] ⚠️ ${linksWithNullNames.length} links have null names:`);
+      linksWithNullNames.forEach(link => {
+        link.endpoints.forEach((ep, idx) => {
+          if ((ep.areaId && !ep.areaName) || (ep.deviceId && !ep.deviceName)) {
+            console.warn(`[API /status]   - Link ${link.linkId}, endpoint ${idx}: areaId=${ep.areaId}, areaName=${ep.areaName}, deviceId=${ep.deviceId}, deviceName=${ep.deviceName}`);
+          }
+        });
+      });
+    }
+    
     res.json(status);
   } catch (error) {
     console.error('Error fetching status:', error);
