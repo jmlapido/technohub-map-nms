@@ -691,7 +691,7 @@ export default function NetworkMap({ status, config, onRefresh, isRefreshing = f
           <div 
             className={`absolute top-12 z-[1000] max-w-[calc(100vw-1rem)] lg:max-w-sm w-full max-h-[calc(85vh-3rem)] lg:max-h-[calc(80vh-3rem)] overflow-auto transition-all duration-300 ease-in-out ${
               selectedDeviceId 
-                ? 'right-[calc(100vw-1rem-24rem+0.5rem)] lg:right-[calc(100%-30rem)]' 
+                ? 'hidden lg:block right-[calc(100%-30rem)]' 
                 : 'right-2 lg:right-4'
             }`}
           >
