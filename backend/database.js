@@ -33,90 +33,239 @@ const CRITICALITY_INTERVALS = {
   'low': 300         // Low priority ping every 5 minutes
 };
 
+// Recover from database corruption
+function recoverDatabase() {
+  console.warn('Database corruption detected. Attempting recovery...');
+  
+  // Close existing connection if any
+  if (db) {
+    try {
+      db.close();
+    } catch (e) {
+      // Ignore errors when closing corrupted db
+    }
+    db = null;
+  }
+  
+  // Backup corrupted database
+  if (fs.existsSync(dbPath)) {
+    const backupPath = path.join(dataDir, `database-corrupted-${Date.now()}.sqlite.backup`);
+    try {
+      fs.copyFileSync(dbPath, backupPath);
+      console.log(`Corrupted database backed up to: ${backupPath}`);
+    } catch (error) {
+      console.error('Failed to backup corrupted database:', error);
+    }
+    
+    // Remove corrupted database
+    try {
+      fs.unlinkSync(dbPath);
+      console.log('Removed corrupted database file');
+    } catch (error) {
+      console.error('Failed to remove corrupted database:', error);
+    }
+    
+    // Also remove any journal/WAL files
+    const journalPath = `${dbPath}-journal`;
+    const walPath = `${dbPath}-wal`;
+    const shmPath = `${dbPath}-shm`;
+    
+    [journalPath, walPath, shmPath].forEach(file => {
+      if (fs.existsSync(file)) {
+        try {
+          fs.unlinkSync(file);
+        } catch (e) {
+          // Ignore errors
+        }
+      }
+    });
+  }
+  
+  // Create new database
+  try {
+    db = new Database(dbPath);
+    console.log('New database created successfully');
+    initDatabase();
+    console.log('Database recovery completed');
+    return true;
+  } catch (error) {
+    console.error('Failed to recover database:', error);
+    return false;
+  }
+}
+
 function getDatabase() {
   if (!db) {
     try {
+      // Only check integrity if database file already exists
+      const dbExists = fs.existsSync(dbPath);
+      
       db = new Database(dbPath);
+      
+      // Verify database integrity only if it's an existing database
+      if (dbExists) {
+        try {
+          const integrityResult = db.pragma('integrity_check');
+          // integrity_check returns 'ok' or details of corruption
+          if (integrityResult && Array.isArray(integrityResult) && integrityResult[0] && integrityResult[0].integrity_check !== 'ok') {
+            throw new Error('Database integrity check failed');
+          }
+        } catch (error) {
+          if (error.code === 'SQLITE_CORRUPT' || error.message.includes('database disk image is malformed') || error.message.includes('integrity check failed')) {
+            console.error('Database integrity check failed:', error);
+            if (!recoverDatabase()) {
+              throw new Error('Failed to recover from database corruption');
+            }
+            return db;
+          }
+          throw error;
+        }
+      }
+      
       console.log('Database connection established');
     } catch (error) {
+      // Check for corruption errors
+      if (error.code === 'SQLITE_CORRUPT' || error.message.includes('database disk image is malformed')) {
+        console.error('Database corruption detected during connection:', error);
+        if (recoverDatabase()) {
+          return db;
+        }
+      }
       console.error('Failed to connect to database:', error);
       throw error;
     }
   }
+  
+  // Periodically check database integrity (every 100th call to avoid overhead)
+  if (Math.random() < 0.01) {
+    try {
+      const quickCheck = db.pragma('quick_check');
+      if (quickCheck && Array.isArray(quickCheck) && quickCheck[0] && quickCheck[0].quick_check !== 'ok') {
+        throw new Error('Database quick check failed');
+      }
+    } catch (error) {
+      if (error.code === 'SQLITE_CORRUPT' || error.message.includes('database disk image is malformed') || error.message.includes('check failed')) {
+        console.error('Database corruption detected during operation:', error);
+        if (recoverDatabase()) {
+          return db;
+        }
+        throw error;
+      }
+    }
+  }
+  
   return db;
+}
+
+// Wrapper for database operations that handles corruption gracefully
+function safeDbOperation(operation, defaultValue = null) {
+  try {
+    return operation();
+  } catch (error) {
+    if (error.code === 'SQLITE_CORRUPT' || error.message.includes('database disk image is malformed')) {
+      console.error('Database corruption detected during operation:', error);
+      if (recoverDatabase()) {
+        try {
+          return operation();
+        } catch (retryError) {
+          console.error('Operation failed after recovery:', retryError);
+          return defaultValue;
+        }
+      }
+      return defaultValue;
+    }
+    throw error;
+  }
 }
 
 // Initialize database schema
 function initDatabase() {
-  const db = getDatabase();
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ping_history (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      device_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      latency INTEGER,
-      packet_loss REAL,
-      timestamp INTEGER NOT NULL
-    );
+  try {
+    const db = getDatabase();
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS ping_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        latency INTEGER,
+        packet_loss REAL,
+        timestamp INTEGER NOT NULL
+      );
+      
+      CREATE TABLE IF NOT EXISTS ping_aggregates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id TEXT NOT NULL,
+        period_type TEXT NOT NULL, -- 'hourly' or 'daily'
+        period_start INTEGER NOT NULL,
+        avg_latency REAL,
+        min_latency INTEGER,
+        max_latency INTEGER,
+        avg_packet_loss REAL,
+        uptime_percent REAL,
+        ping_count INTEGER,
+        down_count INTEGER,
+        degraded_count INTEGER
+      );
+      
+      -- Optimized indexes
+      CREATE INDEX IF NOT EXISTS idx_device_timestamp ON ping_history(device_id, timestamp);
+      CREATE INDEX IF NOT EXISTS idx_timestamp ON ping_history(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_device_status_timestamp ON ping_history(device_id, status, timestamp);
+      CREATE INDEX IF NOT EXISTS idx_status_timestamp ON ping_history(status, timestamp);
+      
+      -- Aggregate indexes
+      CREATE INDEX IF NOT EXISTS idx_aggregates_device_period ON ping_aggregates(device_id, period_type, period_start);
+      CREATE INDEX IF NOT EXISTS idx_aggregates_period_start ON ping_aggregates(period_start);
+    `);
     
-    CREATE TABLE IF NOT EXISTS ping_aggregates (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      device_id TEXT NOT NULL,
-      period_type TEXT NOT NULL, -- 'hourly' or 'daily'
-      period_start INTEGER NOT NULL,
-      avg_latency REAL,
-      min_latency INTEGER,
-      max_latency INTEGER,
-      avg_packet_loss REAL,
-      uptime_percent REAL,
-      ping_count INTEGER,
-      down_count INTEGER,
-      degraded_count INTEGER
-    );
-    
-    -- Optimized indexes
-    CREATE INDEX IF NOT EXISTS idx_device_timestamp ON ping_history(device_id, timestamp);
-    CREATE INDEX IF NOT EXISTS idx_timestamp ON ping_history(timestamp);
-    CREATE INDEX IF NOT EXISTS idx_device_status_timestamp ON ping_history(device_id, status, timestamp);
-    CREATE INDEX IF NOT EXISTS idx_status_timestamp ON ping_history(status, timestamp);
-    
-    -- Aggregate indexes
-    CREATE INDEX IF NOT EXISTS idx_aggregates_device_period ON ping_aggregates(device_id, period_type, period_start);
-    CREATE INDEX IF NOT EXISTS idx_aggregates_period_start ON ping_aggregates(period_start);
-  `);
-  
-  console.log('Database initialized with optimized schema');
+    console.log('Database initialized with optimized schema');
+  } catch (error) {
+    if (error.code === 'SQLITE_CORRUPT' || error.message.includes('database disk image is malformed')) {
+      console.error('Database corruption detected during initialization:', error);
+      if (recoverDatabase()) {
+        // Retry initialization after recovery
+        return initDatabase();
+      }
+      throw error;
+    }
+    throw error;
+  }
 }
 
 // Store ping result
 function storePingResult(deviceId, status, latency, packetLoss) {
-  const db = getDatabase();
-  const stmt = db.prepare(`
-    INSERT INTO ping_history (device_id, status, latency, packet_loss, timestamp)
-    VALUES (?, ?, ?, ?, ?)
-  `);
-  
-  stmt.run(deviceId, status, latency, packetLoss, Date.now());
+  return safeDbOperation(() => {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      INSERT INTO ping_history (device_id, status, latency, packet_loss, timestamp)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    
+    stmt.run(deviceId, status, latency, packetLoss, Date.now());
+    return true;
+  }, false);
 }
 
 // Get offline duration for a device
 function getOfflineDuration(deviceId) {
-  const db = getDatabase();
-  const stmt = db.prepare(`
-    SELECT timestamp FROM ping_history
-    WHERE device_id = ? AND status = 'down'
-    ORDER BY timestamp DESC
-    LIMIT 1
-  `);
-  
-  const result = stmt.get(deviceId);
-  if (result) {
-    const offlineTime = result.timestamp;
-    const now = Date.now();
-    const duration = now - offlineTime;
-    return duration;
-  }
-  return null;
+  return safeDbOperation(() => {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      SELECT timestamp FROM ping_history
+      WHERE device_id = ? AND status = 'down'
+      ORDER BY timestamp DESC
+      LIMIT 1
+    `);
+    
+    const result = stmt.get(deviceId);
+    if (result) {
+      const offlineTime = result.timestamp;
+      const now = Date.now();
+      const duration = now - offlineTime;
+      return duration;
+    }
+    return null;
+  }, null);
 }
 
 // Get current status for all devices (with caching)
@@ -128,35 +277,40 @@ function getCurrentStatus(config, forceRefresh = false) {
     return statusCache.data;
   }
   
-  const db = getDatabase();
-  const oneMonthAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
-  
-  // Get latest ping for each device (optimized query)
-  const stmt = db.prepare(`
-    SELECT device_id, status, latency, packet_loss, timestamp
-    FROM ping_history p1
-    WHERE timestamp > ? AND timestamp = (
-      SELECT MAX(timestamp) FROM ping_history p2 
-      WHERE p2.device_id = p1.device_id AND p2.timestamp > ?
-    )
-    ORDER BY device_id
-  `);
-  
-  const results = stmt.all(oneMonthAgo, oneMonthAgo);
+  // Query database with corruption handling
+  const results = safeDbOperation(() => {
+    const db = getDatabase();
+    const oneMonthAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+    
+    // Get latest ping for each device (optimized query)
+    const stmt = db.prepare(`
+      SELECT device_id, status, latency, packet_loss, timestamp
+      FROM ping_history p1
+      WHERE timestamp > ? AND timestamp = (
+        SELECT MAX(timestamp) FROM ping_history p2 
+        WHERE p2.device_id = p1.device_id AND p2.timestamp > ?
+      )
+      ORDER BY device_id
+    `);
+    
+    return stmt.all(oneMonthAgo, oneMonthAgo);
+  }, []);
   
   // Group by device and get latest
   const deviceStatuses = {};
-  results.forEach(row => {
-    if (!deviceStatuses[row.device_id]) {
-      deviceStatuses[row.device_id] = {
-        deviceId: row.device_id,
-        status: row.status,
-        latency: row.latency,
-        packetLoss: row.packet_loss,
-        lastChecked: new Date(row.timestamp).toISOString()
-      };
-    }
-  });
+  if (results && Array.isArray(results)) {
+    results.forEach(row => {
+      if (!deviceStatuses[row.device_id]) {
+        deviceStatuses[row.device_id] = {
+          deviceId: row.device_id,
+          status: row.status,
+          latency: row.latency,
+          packetLoss: row.packet_loss,
+          lastChecked: new Date(row.timestamp).toISOString()
+        };
+      }
+    });
+  }
   
   const areaMap = new Map(config.areas.map(area => [area.id, area]));
   const deviceMap = new Map(config.devices.map(device => [device.id, device]));
@@ -291,59 +445,61 @@ function getCurrentStatus(config, forceRefresh = false) {
 
 // Get device history with trending data (up to 1 month)
 function getDeviceHistory(deviceId, period = '7d') {
-  const db = getDatabase();
-  let timeAgo;
-  
-  switch(period) {
-    case '1h': timeAgo = Date.now() - (60 * 60 * 1000); break;
-    case '24h': timeAgo = Date.now() - (24 * 60 * 60 * 1000); break;
-    case '7d': timeAgo = Date.now() - (7 * 24 * 60 * 60 * 1000); break;
-    case '30d': timeAgo = Date.now() - (30 * 24 * 60 * 60 * 1000); break;
-    default: timeAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
-  }
-  
-  // For longer periods, use aggregated data when available
-  if (period === '30d' || period === '7d') {
-    const aggregateStmt = db.prepare(`
-      SELECT 'hourly' as type, period_start as timestamp, avg_latency as latency, 
-             avg_packet_loss as packet_loss, uptime_percent, ping_count
-      FROM ping_aggregates
-      WHERE device_id = ? AND period_type = 'hourly' AND period_start > ?
-      ORDER BY period_start ASC
+  return safeDbOperation(() => {
+    const db = getDatabase();
+    let timeAgo;
+    
+    switch(period) {
+      case '1h': timeAgo = Date.now() - (60 * 60 * 1000); break;
+      case '24h': timeAgo = Date.now() - (24 * 60 * 60 * 1000); break;
+      case '7d': timeAgo = Date.now() - (7 * 24 * 60 * 60 * 1000); break;
+      case '30d': timeAgo = Date.now() - (30 * 24 * 60 * 60 * 1000); break;
+      default: timeAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+    }
+    
+    // For longer periods, use aggregated data when available
+    if (period === '30d' || period === '7d') {
+      const aggregateStmt = db.prepare(`
+        SELECT 'hourly' as type, period_start as timestamp, avg_latency as latency, 
+               avg_packet_loss as packet_loss, uptime_percent, ping_count
+        FROM ping_aggregates
+        WHERE device_id = ? AND period_type = 'hourly' AND period_start > ?
+        ORDER BY period_start ASC
+      `);
+      
+      const aggregateResults = aggregateStmt.all(deviceId, timeAgo);
+      
+      if (aggregateResults.length > 0) {
+        return aggregateResults.map(row => ({
+          status: row.uptime_percent > 90 ? 'up' : row.uptime_percent > 50 ? 'degraded' : 'down',
+          latency: Math.round(row.latency || 0),
+          packetLoss: row.packet_loss || 0,
+          timestamp: new Date(row.timestamp).toISOString(),
+          isAggregated: true,
+          uptimePercent: row.uptime_percent,
+          pingCount: row.ping_count
+        }));
+      }
+    }
+    
+    // Fall back to raw data for shorter periods or when aggregates not available
+    const stmt = db.prepare(`
+      SELECT status, latency, packet_loss, timestamp
+      FROM ping_history
+      WHERE device_id = ? AND timestamp > ?
+      ORDER BY timestamp ASC
     `);
     
-    const aggregateResults = aggregateStmt.all(deviceId, timeAgo);
+    const results = stmt.all(deviceId, timeAgo);
     
-    if (aggregateResults.length > 0) {
-      return aggregateResults.map(row => ({
-        status: row.uptime_percent > 90 ? 'up' : row.uptime_percent > 50 ? 'degraded' : 'down',
-        latency: Math.round(row.latency || 0),
-        packetLoss: row.packet_loss || 0,
-        timestamp: new Date(row.timestamp).toISOString(),
-        isAggregated: true,
-        uptimePercent: row.uptime_percent,
-        pingCount: row.ping_count
-      }));
-    }
-  }
-  
-  // Fall back to raw data for shorter periods or when aggregates not available
-  const stmt = db.prepare(`
-    SELECT status, latency, packet_loss, timestamp
-    FROM ping_history
-    WHERE device_id = ? AND timestamp > ?
-    ORDER BY timestamp ASC
-  `);
-  
-  const results = stmt.all(deviceId, timeAgo);
-  
-  return results.map(row => ({
-    status: row.status,
-    latency: row.latency,
-    packetLoss: row.packet_loss,
-    timestamp: new Date(row.timestamp).toISOString(),
-    isAggregated: false
-  }));
+    return results.map(row => ({
+      status: row.status,
+      latency: row.latency,
+      packetLoss: row.packet_loss,
+      timestamp: new Date(row.timestamp).toISOString(),
+      isAggregated: false
+    }));
+  }, []);
 }
 
 // Generate hourly and daily aggregates
