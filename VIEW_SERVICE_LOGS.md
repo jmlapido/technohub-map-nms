@@ -86,3 +86,4 @@ sudo journalctl -u map-ping -n 100 --no-pager
 sudo journalctl -u map-ping -p err -n 50
 ```
 
+
