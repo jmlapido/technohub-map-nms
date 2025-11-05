@@ -2,17 +2,17 @@
   "areas": [
     {
       "id": "area-1",
-      "name": "Manila Office",
+      "name": "Techno",
       "type": "Homes",
-      "lat": 14.5995,
-      "lng": 120.9842
+      "lat": 6.518049343362299,
+      "lng": 124.65440165079804
     },
     {
       "id": "area-1761910812019",
-      "name": "Manila 2",
+      "name": "Puti",
       "type": "Schools",
-      "lat": 14.222,
-      "lng": 120.222
+      "lat": 6.517072256375215,
+      "lng": 124.70003428709204
     }
   ],
   "devices": [

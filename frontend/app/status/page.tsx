@@ -1,13 +1,13 @@
 'use client'
 
-import React, { useEffect, useState, useMemo } from 'react'
-import { networkApi, type NetworkStatus, type Config, type DeviceStatus, type NetworkLinkStatus, type TopologySettings, type AreaStatus } from '@/lib/api'
+import React, { useMemo, useState } from 'react'
+import { useWebSocket } from '@/lib/useWebSocket'
+import { type NetworkStatus, type Config, type DeviceStatus, type NetworkLinkStatus, type TopologySettings, type AreaStatus } from '@/lib/api'
 import { formatLatency } from '@/lib/utils'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Activity, Wifi, AlertTriangle, CheckCircle2, XCircle, Home, ShoppingBag, GraduationCap, Router, Radio, Satellite, Search, Filter, Gauge } from 'lucide-react'
-import { emitTelemetry } from '@/components/TelemetryToast'
 
 class SectionErrorBoundary extends React.Component<React.PropsWithChildren<{ fallback?: React.ReactNode }>, { hasError: boolean }> {
   constructor(props: React.PropsWithChildren<{ fallback?: React.ReactNode }>) {
@@ -208,82 +208,22 @@ function deriveAreaStatusFromDevices(devices: DeviceStatus[]): AreaStatus['statu
 }
 
 export default function StatusPage() {
-  const [status, setStatus] = useState<NetworkStatus | null>(null)
-  const [config, setConfig] = useState<Pick<Config, 'areas' | 'links' | 'devices' | 'settings'> | null>(null)
-  const [loading, setLoading] = useState(true)
+  const { status, config: fullConfig, loading, isConnected } = useWebSocket({
+    fallbackPollInterval: 15000, // 15 seconds fallback polling
+    // Note: onStatusUpdate callback removed to prevent spam
+    // WebSocket updates are silent and real-time by design
+  })
+  
+  const config = fullConfig ? {
+    areas: fullConfig.areas,
+    links: fullConfig.links,
+    devices: fullConfig.devices,
+    settings: fullConfig.settings
+  } : null
+  
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'up' | 'down' | 'degraded'>('all')
   const [areaTypeFilter, setAreaTypeFilter] = useState<string>('all')
-
-  useEffect(() => {
-    loadData()
-    
-    // Fixed interval - no need to recreate on every retry
-    const interval = setInterval(loadData, 15000) // 15 seconds to reduce load
-    return () => clearInterval(interval)
-  }, []) // Empty dependency array - only run once on mount
-
-  const loadData = async () => {
-    const startTime = Date.now();
-    try {
-      console.log('[StatusPage] Loading data...');
-      const [statusData, configData] = await Promise.all([
-        networkApi.getStatus(),
-        networkApi.getPublicConfig()
-      ])
-      const duration = Date.now() - startTime;
-      console.log(`✅ Status loaded in ${duration}ms`);
-      
-      // Debug: Check for null names in status data
-      console.log('[StatusPage] Config loaded:', {
-        areas: configData.areas.length,
-        devices: configData.devices.length,
-        links: configData.links.length
-      });
-      console.log('[StatusPage] Config areas:', configData.areas.map(a => ({ id: a.id, name: a.name })));
-      console.log('[StatusPage] Config devices:', configData.devices.map(d => ({ id: d.id, name: d.name, areaId: d.areaId })));
-      
-      if (statusData.links) {
-        const linksWithNullNames = statusData.links.filter(link => 
-          link.endpoints?.some(ep => (ep.areaId && !ep.areaName) || (ep.deviceId && !ep.deviceName))
-        );
-        if (linksWithNullNames.length > 0) {
-          console.warn(`[StatusPage] ⚠️ ${linksWithNullNames.length} links have null names in API response:`);
-          linksWithNullNames.forEach(link => {
-            link.endpoints?.forEach((ep, idx) => {
-              if ((ep.areaId && !ep.areaName) || (ep.deviceId && !ep.deviceName)) {
-                console.warn(`[StatusPage]   - Link ${link.linkId}, endpoint ${idx}:`, {
-                  areaId: ep.areaId,
-                  areaName: ep.areaName,
-                  deviceId: ep.deviceId,
-                  deviceName: ep.deviceName,
-                  configHasArea: configData.areas.some(a => a.id === ep.areaId),
-                  configHasDevice: configData.devices.some(d => d.id === ep.deviceId)
-                });
-              }
-            });
-          });
-        }
-      }
-      
-      // Show success toast for slow loads
-      if (duration > 2000) {
-        emitTelemetry('warning', `Slow data load: ${duration}ms`);
-      } else if (duration > 1000) {
-        emitTelemetry('info', `Status updated in ${duration}ms`);
-      }
-      
-      setStatus(statusData)
-      setConfig(configData)
-      setLoading(false)
-    } catch (error: unknown) {
-      const duration = Date.now() - startTime;
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      console.error(`❌ Failed to load status data after ${duration}ms:`, message);
-      emitTelemetry('error', `Failed to load status: ${message}`);
-      setLoading(false);
-    }
-  }
 
   const topologySettings = config?.settings?.topology
   const includeUnlinkedDevices = topologySettings?.autoIncludeUnlinkedDevices ?? true

@@ -1,10 +1,12 @@
 const ping = require('ping');
 const { storePingResult, getDevicePingInterval, clearStatusCache } = require('./database');
+const PingScheduler = require('./schedulers/PingScheduler');
 
-// Store multiple intervals for different device criticalities
-let deviceIntervals = new Map();
+// Use PingScheduler instead of individual intervals
+let scheduler = null;
 let currentConfig = null;
 let isMonitoring = false;
+let statusEmitter = null; // WebSocket emitter for real-time updates
 
 // Batch processing for better performance
 const BATCH_SIZE = 10;
@@ -33,50 +35,54 @@ function formatLatencyForLog(latency) {
   return '0.00ms';
 }
 
-function startMonitoring(config) {
+function startMonitoring(config, emitter = null) {
   stopMonitoring();
   currentConfig = config;
   isMonitoring = true;
+  statusEmitter = emitter;
   
-  console.log('Starting optimized monitoring with device criticality...');
+  console.log('[Monitor] Starting optimized monitoring with queue-based scheduler...');
   
-  // Initial ping for all devices
-  setTimeout(pingAllDevices, 1000); // Delay to ensure database is ready
+  // Initialize scheduler
+  if (!scheduler) {
+    scheduler = new PingScheduler({
+      tickInterval: 10000, // 10 seconds
+      maxConcurrentPings: 5,
+      deviceStaggerDelay: 50 // 50ms between devices
+    });
+    
+    // Set up ping handler
+    scheduler.onPingStart = (device) => {
+      pingDevice(device);
+    };
+  }
   
-  // Set up individual intervals for each device based on criticality
-  setupDeviceIntervals();
-}
-
-function setupDeviceIntervals() {
-  if (!currentConfig || !isMonitoring) return;
-  
+  // Add all devices to scheduler
   currentConfig.devices.forEach(device => {
-    const pingInterval = getDevicePingInterval(device) * 1000; // Convert to milliseconds
-    const criticality = device.criticality || 'normal';
-    
-    console.log(`Setting up ${device.name} (${criticality}) with ${pingInterval/1000}s interval`);
-    
-    // Create individual interval for each device
-    const intervalId = setInterval(() => {
-      if (isMonitoring) {
-        pingDevice(device);
-      }
-    }, pingInterval);
-    
-    deviceIntervals.set(device.id, intervalId);
+    const pingInterval = getDevicePingInterval(device);
+    scheduler.addDevice(device, pingInterval);
   });
+  
+  // Start scheduler
+  scheduler.start();
+  
+  // Initial ping for all devices (staggered)
+  setTimeout(() => {
+    pingAllDevices();
+  }, 1000);
+  
+  console.log(`[Monitor] Monitoring ${currentConfig.devices.length} devices with scheduler`);
 }
 
 function stopMonitoring() {
   isMonitoring = false;
   
-  // Clear all device intervals
-  deviceIntervals.forEach((intervalId, deviceId) => {
-    clearInterval(intervalId);
-  });
-  deviceIntervals.clear();
+  if (scheduler) {
+    scheduler.stop();
+    scheduler.clearDevices();
+  }
   
-  console.log('Monitoring stopped');
+  console.log('[Monitor] Monitoring stopped');
 }
 
 // Ping all devices (used for initial startup)
@@ -153,14 +159,30 @@ async function pingDevice(device) {
       }
     }
     
-    // Store result
-    storePingResult(device.id, status, latency, packetLoss);
+    // Store result (now async)
+    await storePingResult(device.id, status, latency, packetLoss);
+    
+    // Record success in scheduler
+    if (scheduler) {
+      scheduler.recordSuccess(device.id);
+    }
     
     const duration = Date.now() - startTime;
     const logLevel = criticality === 'critical' ? 'info' : 'debug';
     
     if (logLevel === 'info' || status !== 'up') {
       console.log(`[${criticality.toUpperCase()}] ${device.name} (${device.ip}): ${status} - ${formatLatencyForLog(latency)} (${duration}ms total)`);
+    }
+    
+    // Emit WebSocket update if available
+    if (statusEmitter) {
+      statusEmitter.emitDeviceUpdate(device.id, {
+        deviceId: device.id,
+        status,
+        latency,
+        packetLoss,
+        lastChecked: new Date().toISOString()
+      });
     }
     
     // Clear cache only if status might have changed
@@ -172,8 +194,23 @@ async function pingDevice(device) {
     const duration = Date.now() - startTime;
     console.error(`[${criticality.toUpperCase()}] Error pinging ${device.name} (${device.ip}): ${error.message} (${duration}ms)`);
     
+    // Record failure in scheduler
+    if (scheduler) {
+      scheduler.recordFailure(device.id);
+    }
+    
     // Store as down with error context
-    storePingResult(device.id, 'down', undefined, undefined);
+    await storePingResult(device.id, 'down', undefined, undefined);
+    
+    // Emit WebSocket update
+    if (statusEmitter) {
+      statusEmitter.emitDeviceUpdate(device.id, {
+        deviceId: device.id,
+        status: 'down',
+        lastChecked: new Date().toISOString()
+      });
+    }
+    
     clearStatusCache(); // Clear cache on errors
   }
 }
@@ -185,17 +222,24 @@ function isValidIP(ip) {
 }
 
 // Restart monitoring when config changes
-function restartMonitoring(newConfig) {
-  console.log('Restarting monitoring with new configuration...');
+function restartMonitoring(newConfig, emitter = null) {
+  console.log('[Monitor] Restarting monitoring with new configuration...');
   stopMonitoring();
   currentConfig = newConfig;
-  setTimeout(() => startMonitoring(newConfig), 1000);
+  statusEmitter = emitter;
+  setTimeout(() => startMonitoring(newConfig, emitter), 1000);
+}
+
+// Get scheduler instance (for stats/monitoring)
+function getScheduler() {
+  return scheduler;
 }
 
 module.exports = {
   startMonitoring,
   stopMonitoring,
   restartMonitoring,
+  getScheduler,
   pingDevice // Export for manual testing
 };
 

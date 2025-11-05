@@ -1,16 +1,22 @@
 ﻿const express = require('express');
+const http = require('http');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const { initDatabase, getCurrentStatus, clearStatusCache, resetDatabase, getDatabaseStats } = require('./database');
 const { startMonitoring, restartMonitoring } = require('./monitor');
+const StatusEmitter = require('./websocket/StatusEmitter');
 const archiver = require('archiver');
 const multer = require('multer');
 const extract = require('extract-zip');
 const compression = require('compression');
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.BACKEND_PORT || 5000;
+
+// Initialize WebSocket server
+const statusEmitter = new StatusEmitter(server);
 
 // Enable compression for better performance over Cloudflare
 app.use(compression({
@@ -377,17 +383,27 @@ app.use((req, res, next) => {
   next();
 });
 
-// Initialize database
-initDatabase();
-
-// Load configuration
+// Initialize database (now async)
+let config = null;
 const configPath = path.join(__dirname, 'data', 'config.json');
-let config = loadConfig(configPath);
 
-// Start monitoring with slight delay to ensure database is ready
-setTimeout(() => {
-  startMonitoring(config);
-}, 2000);
+(async () => {
+  try {
+    await initDatabase();
+    console.log('[Server] Database initialization complete');
+    
+    // Load configuration
+    config = loadConfig(configPath);
+    
+    // Start monitoring with WebSocket emitter
+    setTimeout(() => {
+      startMonitoring(config, statusEmitter);
+    }, 2000);
+  } catch (error) {
+    console.error('[Server] Failed to initialize:', error);
+    process.exit(1);
+  }
+})();
 
 // Enhanced Routes with better error handling and caching
 
@@ -402,11 +418,11 @@ app.get('/api/health', (req, res) => {
 });
 
 // Combined dashboard endpoint (status + public config)
-app.get('/api/dashboard', (req, res) => {
+app.get('/api/dashboard', async (req, res) => {
   try {
     // Always use fresh config to ensure names are resolved correctly
     const freshConfig = loadConfig(configPath);
-    const status = getCurrentStatus(freshConfig);
+    const status = await getCurrentStatus(freshConfig);
     const publicConfig = {
       areas: freshConfig.areas || [],
       links: freshConfig.links || [],
@@ -448,7 +464,7 @@ app.get('/api/dashboard', (req, res) => {
 });
 
 // Legacy status endpoint (kept for backward compatibility)
-app.get('/api/status', (req, res) => {
+app.get('/api/status', async (req, res) => {
   try {
     console.log(`[API /status] Request received at ${new Date().toISOString()}`);
     // Always use fresh config to ensure names are resolved correctly
@@ -456,7 +472,7 @@ app.get('/api/status', (req, res) => {
     console.log(`[API /status] Config loaded: ${freshConfig.areas.length} areas, ${freshConfig.devices.length} devices`);
     console.log(`[API /status] Config areas:`, freshConfig.areas.map(a => ({ id: a.id, name: a.name })));
     console.log(`[API /status] Config devices:`, freshConfig.devices.map(d => ({ id: d.id, name: d.name, areaId: d.areaId })));
-    const status = getCurrentStatus(freshConfig);
+    const status = await getCurrentStatus(freshConfig);
     
     // Debug: Check for null names in response
     const linksWithNullNames = status.links.filter(link => 
@@ -598,8 +614,8 @@ app.post('/api/config', (req, res) => {
     // Clear cache before restarting monitoring
     clearStatusCache();
     
-    // Restart monitoring with new config
-    restartMonitoring(config);
+    // Restart monitoring with new config and WebSocket emitter
+    restartMonitoring(config, statusEmitter);
     
     res.json({ 
       success: true, 
@@ -720,8 +736,8 @@ app.post('/api/import', upload.single('backup'), async (req, res) => {
     // Load new config
     config = loadConfig(currentConfigPath);
     
-    // Restart monitoring
-    startMonitoring(config);
+    // Restart monitoring with WebSocket emitter
+    startMonitoring(config, statusEmitter);
     
     // Cleanup temp files
     fs.unlinkSync(req.file.path);
@@ -862,8 +878,35 @@ app.post('/api/auth/change-password', (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+// Health check endpoint with system stats
+app.get('/api/system/stats', async (req, res) => {
+  try {
+    const { getScheduler } = require('./monitor');
+    const { getBatchWriter, getRedisManagerInstance } = require('./database');
+    
+    const scheduler = getScheduler();
+    const batchWriter = getBatchWriter();
+    const redisManager = getRedisManagerInstance();
+    
+    const stats = {
+      scheduler: scheduler ? scheduler.getStats() : null,
+      batchWriter: batchWriter ? batchWriter.getStats() : null,
+      redis: redisManager ? await redisManager.healthCheck() : null,
+      websocket: statusEmitter ? statusEmitter.getStats() : null,
+      database: getDatabaseStats(),
+      timestamp: new Date().toISOString()
+    };
+    
+    res.json(stats);
+  } catch (error) {
+    console.error('Error getting system stats:', error);
+    res.status(500).json({ error: 'Failed to get system stats', details: error.message });
+  }
+});
+
+server.listen(PORT, () => {
   console.log(`Backend server running on port ${PORT}`);
   console.log(`API available at http://localhost:${PORT}/api`);
+  console.log(`WebSocket server available at ws://localhost:${PORT}`);
 });
 

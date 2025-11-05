@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { XCircle, CheckCircle2, AlertTriangle, Loader } from 'lucide-react'
 
 export interface TelemetryEvent {
+  id: string
   type: 'success' | 'error' | 'warning' | 'info'
   message: string
   timestamp: number
@@ -20,7 +21,7 @@ const TelemetryToast = () => {
       
       // Auto-dismiss after 5 seconds
       setTimeout(() => {
-        setEvents(prev => prev.filter(ev => ev.timestamp !== e.detail.timestamp))
+        setEvents(prev => prev.filter(ev => ev.id !== e.detail.id))
       }, 5000)
     }
 
@@ -51,7 +52,7 @@ const TelemetryToast = () => {
     <div className="fixed bottom-4 right-4 z-50 space-y-2 max-w-md">
       {events.map((event) => (
         <div
-          key={event.timestamp}
+          key={event.id}
           className="bg-background border rounded-lg shadow-lg p-3 flex items-start gap-3 animate-in slide-in-from-bottom"
         >
           {getIcon(event.type)}
@@ -59,7 +60,7 @@ const TelemetryToast = () => {
             <p className="text-sm font-medium">{event.message}</p>
           </div>
           <button
-            onClick={() => setEvents(prev => prev.filter(e => e.timestamp !== event.timestamp))}
+            onClick={() => setEvents(prev => prev.filter(e => e.id !== event.id))}
             className="text-muted-foreground hover:text-foreground"
             aria-label="Dismiss"
           >
@@ -74,8 +75,11 @@ const TelemetryToast = () => {
 // Helper function to emit telemetry events
 export const emitTelemetry = (type: TelemetryEvent['type'], message: string) => {
   if (typeof window !== 'undefined') {
+    // Generate unique ID using timestamp + random number to prevent duplicates
+    const uniqueId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
     window.dispatchEvent(new CustomEvent('telemetry', {
       detail: {
+        id: uniqueId,
         type,
         message,
         timestamp: Date.now()

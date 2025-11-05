@@ -1,6 +1,8 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const { getRedisManager } = require('./cache/RedisManager');
+const BatchWriter = require('./database/BatchWriter');
 
 // Use data directory for persistence
 const dataDir = path.join(__dirname, 'data');
@@ -17,6 +19,8 @@ if (!fs.existsSync(dataDir)) {
 
 // Initialize database lazily
 let db = null;
+let batchWriter = null;
+let redisManager = null;
 
 // In-memory cache for status data
 // Cache only device statuses (raw data), not fully resolved status with names
@@ -181,10 +185,10 @@ function safeDbOperation(operation, defaultValue = null) {
 }
 
 // Initialize database schema
-function initDatabase() {
+async function initDatabase() {
   try {
-    const db = getDatabase();
-    db.exec(`
+    const dbInstance = getDatabase();
+    dbInstance.exec(`
       CREATE TABLE IF NOT EXISTS ping_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         device_id TEXT NOT NULL,
@@ -221,6 +225,20 @@ function initDatabase() {
     `);
     
     console.log('Database initialized with optimized schema');
+    
+    // Initialize BatchWriter
+    if (!batchWriter) {
+      batchWriter = new BatchWriter(dbInstance, 30000, 100); // 30s interval, max 100 records
+      batchWriter.start();
+      console.log('[Database] BatchWriter initialized');
+    }
+    
+    // Initialize Redis Manager
+    if (!redisManager) {
+      redisManager = getRedisManager();
+      await redisManager.connect();
+      console.log('[Database] Redis Manager initialized');
+    }
   } catch (error) {
     if (error.code === 'SQLITE_CORRUPT' || error.message.includes('database disk image is malformed')) {
       console.error('Database corruption detected during initialization:', error);
@@ -235,17 +253,53 @@ function initDatabase() {
 }
 
 // Store ping result
-function storePingResult(deviceId, status, latency, packetLoss) {
-  return safeDbOperation(() => {
-    const db = getDatabase();
-    const stmt = db.prepare(`
-      INSERT INTO ping_history (device_id, status, latency, packet_loss, timestamp)
-      VALUES (?, ?, ?, ?, ?)
-    `);
+async function storePingResult(deviceId, status, latency, packetLoss) {
+  const timestamp = Date.now();
+  const deviceStatus = {
+    deviceId,
+    status,
+    latency,
+    packetLoss,
+    timestamp,
+    lastChecked: new Date(timestamp).toISOString()
+  };
+  
+  // Store in Redis immediately (for real-time status)
+  if (redisManager) {
+    const redisKey = `device:status:${deviceId}`;
+    await redisManager.set(redisKey, deviceStatus, 3600); // 1 hour TTL
     
-    stmt.run(deviceId, status, latency, packetLoss, Date.now());
-    return true;
-  }, false);
+    // Also update device list cache
+    const deviceListKey = 'device:status:list';
+    const existingList = await redisManager.get(deviceListKey) || {};
+    existingList[deviceId] = deviceStatus;
+    await redisManager.set(deviceListKey, existingList, 3600);
+  }
+  
+  // Queue SQLite write (batched)
+  if (batchWriter) {
+    batchWriter.queueWrite('insert', 'ping_history', {
+      deviceId,
+      status,
+      latency,
+      packetLoss,
+      timestamp
+    });
+  } else {
+    // Fallback to immediate write if batchWriter not available
+    return safeDbOperation(() => {
+      const db = getDatabase();
+      const stmt = db.prepare(`
+        INSERT INTO ping_history (device_id, status, latency, packet_loss, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      
+      stmt.run(deviceId, status, latency, packetLoss, timestamp);
+      return true;
+    }, false);
+  }
+  
+  return true;
 }
 
 // Get offline duration for a device
@@ -270,49 +324,77 @@ function getOfflineDuration(deviceId) {
   }, null);
 }
 
-// Get current status for all devices (with caching)
-function getCurrentStatus(config, forceRefresh = false) {
+// Get current status for all devices (with Redis caching)
+async function getCurrentStatus(config, forceRefresh = false) {
   const now = Date.now();
   
-  // Query database with corruption handling (or use cached device statuses)
+  // Try Redis first (much faster)
   let deviceStatuses = {};
   let shouldRebuildCache = forceRefresh || !statusCache.deviceStatuses || (now - statusCache.timestamp) >= statusCache.maxAge;
   
   if (shouldRebuildCache) {
-    const results = safeDbOperation(() => {
-      const db = getDatabase();
-      const oneMonthAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
-      
-      // Get latest ping for each device (optimized query)
-      const stmt = db.prepare(`
-        SELECT device_id, status, latency, packet_loss, timestamp
-        FROM ping_history p1
-        WHERE timestamp > ? AND timestamp = (
-          SELECT MAX(timestamp) FROM ping_history p2 
-          WHERE p2.device_id = p1.device_id AND p2.timestamp > ?
-        )
-        ORDER BY device_id
-      `);
-      
-      return stmt.all(oneMonthAgo, oneMonthAgo);
-    }, []);
-    
-    // Group by device and get latest
-    if (results && Array.isArray(results)) {
-      results.forEach(row => {
-        if (!deviceStatuses[row.device_id]) {
-          deviceStatuses[row.device_id] = {
-            deviceId: row.device_id,
-            status: row.status,
-            latency: row.latency,
-            packetLoss: row.packet_loss,
-            lastChecked: new Date(row.timestamp).toISOString()
-          };
+    // Try to get from Redis first
+    if (redisManager && redisManager.isAvailable()) {
+      try {
+        const deviceListKey = 'device:status:list';
+        const cachedStatuses = await redisManager.get(deviceListKey);
+        
+        if (cachedStatuses && typeof cachedStatuses === 'object') {
+          deviceStatuses = cachedStatuses;
+          console.log(`[getCurrentStatus] Loaded ${Object.keys(deviceStatuses).length} device statuses from Redis`);
         }
-      });
+      } catch (error) {
+        console.warn('[getCurrentStatus] Error reading from Redis, falling back to SQLite:', error.message);
+      }
     }
     
-    // Cache device statuses for next time
+    // Fallback to SQLite if Redis unavailable or empty
+    if (Object.keys(deviceStatuses).length === 0) {
+      const results = safeDbOperation(() => {
+        const db = getDatabase();
+        const oneMonthAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+        
+        // Get latest ping for each device (optimized query)
+        const stmt = db.prepare(`
+          SELECT device_id, status, latency, packet_loss, timestamp
+          FROM ping_history p1
+          WHERE timestamp > ? AND timestamp = (
+            SELECT MAX(timestamp) FROM ping_history p2 
+            WHERE p2.device_id = p1.device_id AND p2.timestamp > ?
+          )
+          ORDER BY device_id
+        `);
+        
+        return stmt.all(oneMonthAgo, oneMonthAgo);
+      }, []);
+      
+      // Group by device and get latest
+      if (results && Array.isArray(results)) {
+        results.forEach(row => {
+          if (!deviceStatuses[row.device_id]) {
+            deviceStatuses[row.device_id] = {
+              deviceId: row.device_id,
+              status: row.status,
+              latency: row.latency,
+              packetLoss: row.packet_loss,
+              lastChecked: new Date(row.timestamp).toISOString()
+            };
+          }
+        });
+      }
+      
+      // Update Redis cache if available
+      if (redisManager && redisManager.isAvailable() && Object.keys(deviceStatuses).length > 0) {
+        try {
+          const deviceListKey = 'device:status:list';
+          await redisManager.set(deviceListKey, deviceStatuses, 3600);
+        } catch (error) {
+          console.warn('[getCurrentStatus] Error updating Redis cache:', error.message);
+        }
+      }
+    }
+    
+    // Cache device statuses for next time (in-memory fallback)
     statusCache.deviceStatuses = deviceStatuses;
     statusCache.timestamp = now;
   } else {
@@ -854,6 +936,16 @@ setInterval(generateAggregates, 10 * 60 * 1000);
 // Generate initial aggregates
 setTimeout(generateAggregates, 5000); // Wait 5 seconds after startup
 
+// Get batch writer instance
+function getBatchWriter() {
+  return batchWriter;
+}
+
+// Get Redis manager instance
+function getRedisManagerInstance() {
+  return redisManager;
+}
+
 module.exports = {
   initDatabase,
   storePingResult,
@@ -865,6 +957,8 @@ module.exports = {
   generateAggregates,
   resetDatabase,
   getDatabaseStats,
+  getBatchWriter,
+  getRedisManagerInstance,
   CRITICALITY_INTERVALS
 };
 

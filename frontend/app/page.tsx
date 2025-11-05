@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useMemo } from 'react'
 import dynamic from 'next/dynamic'
-import { networkApi, type NetworkStatus, type Config } from '@/lib/api'
+import { useWebSocket } from '@/lib/useWebSocket'
+import { type NetworkStatus, type Config } from '@/lib/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Home as HomeIcon, ShoppingBag, GraduationCap, Radio, Activity } from 'lucide-react'
 
@@ -35,11 +36,9 @@ const categoryOrder = ['Server/Relay', 'Schools', 'PisoWiFi Vendo', 'Homes'] as 
 type CategoryOrder = typeof categoryOrder[number]
 
 export default function Home() {
-  const [status, setStatus] = useState<NetworkStatus | null>(null)
-  const [config, setConfig] = useState<Config | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [retryCount, setRetryCount] = useState(0)
+  const { status, config, loading, error, isConnected, refresh } = useWebSocket({
+    fallbackPollInterval: 60000, // 60 seconds fallback polling
+  })
 
   const categoryStats = useMemo(() => {
     if (!status || !config) {
@@ -92,53 +91,10 @@ export default function Home() {
     })
   }, [status, config])
 
-  // Memoized load function for better performance
-  const loadData = useCallback(async () => {
-    try {
-      // Use optimized dashboard endpoint
-      const dashboardData = await networkApi.getDashboard()
-      setStatus(dashboardData.status)
-      setConfig(dashboardData.config as Config) // Cast to full Config type
-      setLoading(false)
-      setError(null)
-      setRetryCount(0) // Reset retry count on success
-    } catch (err: unknown) {
-      const error = err instanceof Error ? err : new Error('Unknown dashboard error')
-      console.error('Failed to load dashboard data:', error)
-      
-      // Handle 304 Not Modified gracefully
-      if (error.message === 'Not modified') {
-        console.log('Data not modified, keeping existing data')
-        return
-      }
-      
-      // Exponential backoff for retries
-      const newRetryCount = retryCount + 1
-      setRetryCount(newRetryCount)
-      const backoffDelay = Math.min(1000 * Math.pow(2, newRetryCount), 30000)
-      
-      setError(`Connection lost. Retrying in ${Math.round(backoffDelay/1000)}s... (${newRetryCount})`)
-      setLoading(false)
-      
-      // Auto-retry with backoff
-      setTimeout(loadData, backoffDelay)
-    }
-  }, [retryCount])
-
   // Manual refresh function
-  const handleRefresh = useCallback(() => {
-    setLoading(true)
-    setRetryCount(0)
-    loadData()
-  }, [loadData])
-
-  useEffect(() => {
-    loadData()
-    
-    // Optimized polling - 60 seconds instead of 15
-    const interval = setInterval(loadData, 60000) // 1 minute for better performance
-    return () => clearInterval(interval)
-  }, [loadData])
+  const handleRefresh = () => {
+    refresh()
+  }
 
   if (loading && !status) {
     return (
@@ -146,8 +102,8 @@ export default function Home() {
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
           <p className="text-muted-foreground">Loading network status...</p>
-          {retryCount > 0 && (
-            <p className="text-xs text-muted-foreground mt-2">Retry attempt: {retryCount}</p>
+          {!isConnected && (
+            <p className="text-xs text-muted-foreground mt-2">Using polling fallback</p>
           )}
         </div>
       </div>

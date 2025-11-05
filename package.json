@@ -1,6 +1,6 @@
 {
   "name": "map-ping",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Network link map monitoring system",
   "scripts": {
     "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
