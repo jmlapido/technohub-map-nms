@@ -190,7 +190,7 @@ api.interceptors.response.use(
     if (error.response?.status === 304) {
       console.log('Content not modified (304), but we need fresh data - will retry')
       // Don't return cached data for config endpoints - force fresh fetch
-      if (config.url?.includes('/api/config/public') || config.url?.includes('/api/config')) {
+      if (config?.url?.includes('/api/config/public') || config?.url?.includes('/api/config')) {
         return Promise.reject({ ...error, needsFreshFetch: true })
       }
       // Return empty response - the caller should handle this
