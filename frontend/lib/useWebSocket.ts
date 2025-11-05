@@ -117,23 +117,25 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRes
     };
 
     // WebSocket event handlers
-    const unsubscribeStatus = wsClient.on('status:update', (data: StatusUpdate) => {
-      if (data.data) {
-        setStatus(data.data as NetworkStatus);
+    const unsubscribeStatus = wsClient.on('status:update', (data: unknown) => {
+      const statusUpdate = data as StatusUpdate;
+      if (statusUpdate.data) {
+        setStatus(statusUpdate.data as NetworkStatus);
         if (onStatusUpdate) {
-          onStatusUpdate(data.data as NetworkStatus);
+          onStatusUpdate(statusUpdate.data as NetworkStatus);
         }
       }
     });
 
-    const unsubscribeDevice = wsClient.on('device:update', (data: DeviceUpdate) => {
+    const unsubscribeDevice = wsClient.on('device:update', (data: unknown) => {
+      const deviceUpdate = data as DeviceUpdate;
       if (onDeviceUpdate) {
-        onDeviceUpdate(data);
+        onDeviceUpdate(deviceUpdate);
       }
       
       // Update status with new device data (using functional update to avoid stale closure)
       setStatus(prevStatus => {
-        if (!prevStatus || !data.deviceId || !data.status) {
+        if (!prevStatus || !deviceUpdate.deviceId || !deviceUpdate.status) {
           return prevStatus;
         }
         
@@ -141,8 +143,15 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRes
         updatedStatus.areas = updatedStatus.areas.map(area => ({
           ...area,
           devices: area.devices.map(device => 
-            device.deviceId === data.deviceId
-              ? { ...device, ...data.status }
+            device.deviceId === deviceUpdate.deviceId
+              ? { 
+                  ...device, 
+                  ...deviceUpdate.status,
+                  // Normalize status to match DeviceStatus type ('up' | 'down' | 'unknown')
+                  status: deviceUpdate.status.status === 'degraded' 
+                    ? 'unknown' as const
+                    : (deviceUpdate.status.status as 'up' | 'down' | 'unknown')
+                }
               : device
           )
         }));
@@ -165,12 +174,13 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRes
       startPolling();
     });
 
-    const unsubscribeError = wsClient.on('error', (data: { error?: string }) => {
-      console.error('[useWebSocket] WebSocket error:', data.error);
+    const unsubscribeError = wsClient.on('error', (data: unknown) => {
+      const errorData = data as { error?: string };
+      console.error('[useWebSocket] WebSocket error:', errorData.error);
       setUsePolling(true);
       startPolling();
       if (onError) {
-        onError(new Error(data.error || 'WebSocket error'));
+        onError(new Error(errorData.error || 'WebSocket error'));
       }
     });
 

@@ -1,4 +1,10 @@
-import axios, { AxiosError } from 'axios'
+import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios'
+
+// Extend Axios config to include custom retry properties
+interface ExtendedAxiosRequestConfig extends InternalAxiosRequestConfig {
+  _retry?: boolean
+  _retryCount?: number
+}
 
 // Smart API URL detection that works in all scenarios:
 // 1. Cloudflare Tunnel (same domain)
@@ -184,7 +190,7 @@ api.interceptors.response.use(
     return response
   },
   async (error: AxiosError<unknown>) => {
-    const config = error.config
+    const config = error.config as ExtendedAxiosRequestConfig | undefined
     
     // Handle 304 Not Modified responses
     if (error.response?.status === 304) {
@@ -218,7 +224,7 @@ api.interceptors.response.use(
       config &&
       !config._retry &&
       (config.method === 'get' || config.method === 'GET') &&
-      (error.response?.status >= 500 || error.code === 'ECONNABORTED' || error.code === 'ECONNREFUSED')
+      ((error.response?.status !== undefined && error.response.status >= 500) || error.code === 'ECONNABORTED' || error.code === 'ECONNREFUSED')
     ) {
       config._retry = true
       config._retryCount = 1;
@@ -226,9 +232,10 @@ api.interceptors.response.use(
     if (
       config &&
       config._retry &&
+      config._retryCount !== undefined &&
       config._retryCount < 3 &&
       (config.method === 'get' || config.method === 'GET') &&
-      (error.response?.status >= 500 || error.code === 'ECONNABORTED' || error.code === 'ECONNREFUSED')
+      ((error.response?.status !== undefined && error.response.status >= 500) || error.code === 'ECONNABORTED' || error.code === 'ECONNREFUSED')
     ) {
       const delay = Math.min(1000 * Math.pow(2, config._retryCount), 5000)
       config._retryCount = (config._retryCount || 0) + 1
@@ -294,7 +301,35 @@ export interface NetworkLinkStatus {
   endpoints?: NetworkLinkStatusEndpoint[]
 }
 
-function normalizeDevice(rawDevice: UnknownRecord): Device {
+function normalizeDevice(rawDevice: Record<string, unknown>): Device {
+  let thresholds: Device['thresholds'] | undefined = undefined
+  
+  // Safely extract thresholds with type checking
+  if (rawDevice.thresholds && typeof rawDevice.thresholds === 'object') {
+    const rawThresholds = rawDevice.thresholds as Record<string, unknown>
+    
+    const latencyObj = rawThresholds.latency && typeof rawThresholds.latency === 'object'
+      ? rawThresholds.latency as Record<string, unknown>
+      : null
+      
+    const packetLossObj = rawThresholds.packetLoss && typeof rawThresholds.packetLoss === 'object'
+      ? rawThresholds.packetLoss as Record<string, unknown>
+      : null
+    
+    if (latencyObj && packetLossObj) {
+      thresholds = {
+        latency: {
+          good: typeof latencyObj.good === 'number' ? latencyObj.good : 50,
+          degraded: typeof latencyObj.degraded === 'number' ? latencyObj.degraded : 150
+        },
+        packetLoss: {
+          good: typeof packetLossObj.good === 'number' ? packetLossObj.good : 1,
+          degraded: typeof packetLossObj.degraded === 'number' ? packetLossObj.degraded : 5
+        }
+      }
+    }
+  }
+  
   return {
     id: String(rawDevice.id),
     areaId: String(rawDevice.areaId || ''),
@@ -302,11 +337,11 @@ function normalizeDevice(rawDevice: UnknownRecord): Device {
     type: (rawDevice.type as Device['type']) || 'router',
     ip: String(rawDevice.ip || ''),
     criticality: (rawDevice.criticality as Device['criticality']) || 'normal',
-    thresholds: rawDevice.thresholds as Device['thresholds'] | undefined
+    thresholds
   }
 }
 
-function normalizeLink(rawLink: UnknownRecord, devices: Device[] = []): Link {
+function normalizeLink(rawLink: Record<string, unknown>, devices: Device[] = []): Link {
   if (!rawLink) {
     return {
       id: `link-${Date.now()}`,
@@ -338,25 +373,28 @@ function normalizeLink(rawLink: UnknownRecord, devices: Device[] = []): Link {
 
   const endpoints = rawEndpoints.slice(0, 2).map((endpoint: UnknownRecord | null | undefined, index: number) => {
     const safeEndpoint = endpoint ?? {}
-    const resolvedDevice = safeEndpoint.deviceId ? deviceMap.get(safeEndpoint.deviceId) : undefined
+    const deviceId = safeEndpoint.deviceId != null ? String(safeEndpoint.deviceId) : null
+    const resolvedDevice = deviceId ? deviceMap.get(deviceId) : undefined
     const fallbackAreaId = index === 0 ? rawLink.from : rawLink.to
-    const areaId = safeEndpoint.areaId ?? resolvedDevice?.areaId ?? fallbackAreaId ?? null
+    const rawAreaId = safeEndpoint.areaId ?? resolvedDevice?.areaId ?? fallbackAreaId
+    const areaId = rawAreaId != null ? String(rawAreaId) : null
 
     const normalizedEndpoint: LinkEndpoint = {
       areaId,
-      deviceId: safeEndpoint.deviceId ?? null
+      deviceId
     }
 
     if (safeEndpoint.interface !== undefined) {
-      normalizedEndpoint.interface = safeEndpoint.interface
+      const interfaceVal = safeEndpoint.interface
+      normalizedEndpoint.interface = interfaceVal != null ? String(interfaceVal) : null
     }
 
-    if (safeEndpoint.interfaceType !== undefined) {
-      normalizedEndpoint.interfaceType = safeEndpoint.interfaceType
+    if (safeEndpoint.interfaceType !== undefined && safeEndpoint.interfaceType != null) {
+      normalizedEndpoint.interfaceType = String(safeEndpoint.interfaceType) as LinkConnectionType | string
     }
 
-    if (safeEndpoint.label !== undefined) {
-      normalizedEndpoint.label = safeEndpoint.label
+    if (safeEndpoint.label !== undefined && safeEndpoint.label != null) {
+      normalizedEndpoint.label = String(safeEndpoint.label)
     }
 
     return normalizedEndpoint
@@ -368,16 +406,26 @@ function normalizeLink(rawLink: UnknownRecord, devices: Device[] = []): Link {
 
   const tuple = [endpoints[0], endpoints[1]] as [LinkEndpoint, LinkEndpoint]
 
+  const linkId = rawLink.id != null ? String(rawLink.id) : `link-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+  const linkType = rawLink.type != null ? String(rawLink.type) as LinkConnectionType | string : undefined
+  const linkLabel = rawLink.label != null ? String(rawLink.label) : undefined
+  const linkFrom = rawLink.from != null ? String(rawLink.from) : null
+  const linkTo = rawLink.to != null ? String(rawLink.to) : null
+
+  const metadata: LinkMetadata | undefined = rawLink.metadata && typeof rawLink.metadata === 'object' && !Array.isArray(rawLink.metadata)
+    ? rawLink.metadata as LinkMetadata
+    : undefined
+
   const normalized: Link = {
-    id: rawLink.id ?? `link-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    id: linkId,
     endpoints: tuple,
-    type: rawLink.type,
-    metadata: rawLink.metadata && typeof rawLink.metadata === 'object' ? rawLink.metadata : undefined,
-    label: rawLink.label
+    type: linkType,
+    metadata,
+    label: linkLabel
   }
 
-  normalized.from = rawLink.from ?? tuple[0]?.areaId ?? null
-  normalized.to = rawLink.to ?? tuple[1]?.areaId ?? null
+  normalized.from = linkFrom ?? tuple[0]?.areaId ?? null
+  normalized.to = linkTo ?? tuple[1]?.areaId ?? null
 
   return normalized
 }
@@ -411,12 +459,19 @@ function normalizeNetworkLinkStatus(rawLinkStatus: UnknownRecord): NetworkLinkSt
     ? statusValue
     : 'unknown'
 
+  const metadata: Record<string, unknown> | undefined = 
+    rawLinkStatus?.metadata && 
+    typeof rawLinkStatus.metadata === 'object' && 
+    !Array.isArray(rawLinkStatus.metadata)
+      ? rawLinkStatus.metadata as Record<string, unknown>
+      : undefined
+
   return {
     linkId: rawLinkStatus?.linkId ? String(rawLinkStatus.linkId) : rawLinkStatus?.id ? String(rawLinkStatus.id) : '',
     status: normalizedStatus,
     latency: typeof rawLinkStatus?.latency === 'number' ? rawLinkStatus.latency : undefined,
     type: rawLinkStatus?.type != null ? String(rawLinkStatus.type) : undefined,
-    metadata: rawLinkStatus?.metadata && typeof rawLinkStatus.metadata === 'object' ? rawLinkStatus.metadata : undefined,
+    metadata,
     endpoints: Array.isArray(rawLinkStatus?.endpoints)
       ? rawLinkStatus.endpoints.map(normalizeNetworkLinkEndpoint)
       : undefined
@@ -433,10 +488,27 @@ function normalizeTopologySettings(rawTopology: UnknownRecord | undefined): Topo
 }
 
 function normalizeSettings(rawSettings: UnknownRecord | undefined): Config['settings'] {
-  const latencyGood = rawSettings?.thresholds?.latency?.good
-  const latencyDegraded = rawSettings?.thresholds?.latency?.degraded
-  const packetLossGood = rawSettings?.thresholds?.packetLoss?.good
-  const packetLossDegraded = rawSettings?.thresholds?.packetLoss?.degraded
+  // Safely extract nested threshold values with type checking
+  let latencyGood: number | undefined = undefined
+  let latencyDegraded: number | undefined = undefined
+  let packetLossGood: number | undefined = undefined
+  let packetLossDegraded: number | undefined = undefined
+  
+  if (rawSettings?.thresholds && typeof rawSettings.thresholds === 'object') {
+    const thresholds = rawSettings.thresholds as Record<string, unknown>
+    
+    if (thresholds.latency && typeof thresholds.latency === 'object') {
+      const latency = thresholds.latency as Record<string, unknown>
+      if (typeof latency.good === 'number') latencyGood = latency.good
+      if (typeof latency.degraded === 'number') latencyDegraded = latency.degraded
+    }
+    
+    if (thresholds.packetLoss && typeof thresholds.packetLoss === 'object') {
+      const packetLoss = thresholds.packetLoss as Record<string, unknown>
+      if (typeof packetLoss.good === 'number') packetLossGood = packetLoss.good
+      if (typeof packetLoss.degraded === 'number') packetLossDegraded = packetLoss.degraded
+    }
+  }
 
   return {
     pingInterval: typeof rawSettings?.pingInterval === 'number' ? rawSettings.pingInterval : 60,
@@ -458,32 +530,36 @@ function normalizeSettings(rawSettings: UnknownRecord | undefined): Config['sett
   }
 }
 
-function normalizePartialConfig(rawConfig: UnknownRecord): Pick<Config, 'areas' | 'links' | 'devices' | 'settings'> {
-  const areas: Area[] = Array.isArray(rawConfig?.areas)
-    ? (rawConfig.areas as UnknownRecord[]).map(area => ({
-        id: String(area.id ?? ''),
-        name: String(area.name ?? 'Unknown Area'),
-        type: (area.type as Area['type']) || 'Homes',
-        lat: Number(area.lat ?? 0),
-        lng: Number(area.lng ?? 0)
-      }))
+function normalizePartialConfig(rawConfig: Record<string, unknown> | undefined | null): Pick<Config, 'areas' | 'links' | 'devices' | 'settings'> {
+  const safeConfig: Record<string, unknown> = rawConfig || {};
+  const areas: Area[] = Array.isArray(safeConfig.areas)
+    ? (safeConfig.areas as unknown[]).map(rawArea => {
+        const area = rawArea as Record<string, unknown>
+        return {
+          id: area.id != null ? String(area.id) : '',
+          name: area.name != null ? String(area.name) : 'Unknown Area',
+          type: (area.type as Area['type']) || 'Homes',
+          lat: area.lat != null ? Number(area.lat) : 0,
+          lng: area.lng != null ? Number(area.lng) : 0
+        }
+      })
     : []
 
-  const devices: Device[] = Array.isArray(rawConfig?.devices)
-    ? (rawConfig.devices as UnknownRecord[]).map(normalizeDevice)
+  const devices: Device[] = Array.isArray(safeConfig.devices)
+    ? (safeConfig.devices as UnknownRecord[]).map(normalizeDevice)
     : []
 
-  const links: Link[] = normalizeLinks(Array.isArray(rawConfig?.links) ? (rawConfig.links as UnknownRecord[]) : [], devices)
+  const links: Link[] = normalizeLinks(Array.isArray(safeConfig.links) ? (safeConfig.links as UnknownRecord[]) : [], devices)
 
   return {
     areas,
     devices,
     links,
-    settings: normalizeSettings(rawConfig?.settings as UnknownRecord | undefined)
+    settings: normalizeSettings(safeConfig.settings as UnknownRecord | undefined)
   }
 }
 
-function normalizeFullConfig(rawConfig: UnknownRecord): Config {
+function normalizeFullConfig(rawConfig: Record<string, unknown> | null | undefined): Config {
   const partial = normalizePartialConfig(rawConfig)
   return {
     areas: partial.areas,
@@ -493,10 +569,11 @@ function normalizeFullConfig(rawConfig: UnknownRecord): Config {
   }
 }
 
-function normalizeNetworkStatus(rawStatus: UnknownRecord): NetworkStatus {
-  const areas = Array.isArray(rawStatus?.areas) ? (rawStatus.areas as AreaStatus[]) : []
-  const links = Array.isArray(rawStatus?.links)
-    ? (rawStatus.links as UnknownRecord[]).map(normalizeNetworkLinkStatus)
+function normalizeNetworkStatus(rawStatus: Record<string, unknown> | undefined | null): NetworkStatus {
+  const safeStatus: Record<string, unknown> = rawStatus || {};
+  const areas = Array.isArray(safeStatus.areas) ? (safeStatus.areas as AreaStatus[]) : []
+  const links = Array.isArray(safeStatus.links)
+    ? (safeStatus.links as UnknownRecord[]).map(normalizeNetworkLinkStatus)
     : []
 
   return {
@@ -514,13 +591,18 @@ function normalizeDashboardResponse(data: UnknownRecord | null | undefined): { s
     }
   }
 
-  const normalizedConfig = normalizePartialConfig(data.config || {})
-  const status = normalizeNetworkStatus(data.status)
+  const configData = data.config && typeof data.config === 'object' ? data.config as Record<string, unknown> : {}
+  const statusData = data.status && typeof data.status === 'object' ? data.status as Record<string, unknown> : {}
+  
+  const normalizedConfig = normalizePartialConfig(configData)
+  const status = normalizeNetworkStatus(statusData)
 
+  const lastUpdated = typeof data.lastUpdated === 'string' ? data.lastUpdated : new Date().toISOString()
+  
   return {
     status,
     config: normalizedConfig,
-    lastUpdated: data.lastUpdated || new Date().toISOString()
+    lastUpdated
   }
 }
 
@@ -543,7 +625,9 @@ function normalizeConfigForSave(config: Partial<Config>): Partial<Config> {
   if (Array.isArray(config.links)) {
     const devices = (config.devices || []) as Device[]
     payload.links = config.links.map(link => {
-      const normalized = normalizeLink(link, devices)
+      // Convert Link to Record<string, unknown> to satisfy normalizeLink parameters
+      const linkData = link as unknown as Record<string, unknown>
+      const normalized = normalizeLink(linkData, devices)
       return {
         id: normalized.id,
         type: normalized.type,
@@ -632,12 +716,12 @@ export const networkApi = {
     // Serve from very recent cache to avoid spam
     const cached = recentCache.get(key)
     if (cached && (now - cached.ts) < RECENT_CACHE_MS) {
-      return cached.data as { status: NetworkStatus, config: Pick<Config, 'areas' | 'links' | 'devices'>, lastUpdated: string }
+      return cached.data as { status: NetworkStatus, config: Pick<Config, 'areas' | 'links' | 'devices' | 'settings'>, lastUpdated: string }
     }
 
     // Dedupe concurrent requests
     if (inFlight.has(key)) {
-      return inFlight.get(key) as Promise<{ status: NetworkStatus, config: Pick<Config, 'areas' | 'links' | 'devices'>, lastUpdated: string }>
+      return inFlight.get(key) as Promise<{ status: NetworkStatus, config: Pick<Config, 'areas' | 'links' | 'devices' | 'settings'>, lastUpdated: string }>
     }
 
     const promise = (async () => {
@@ -645,7 +729,8 @@ export const networkApi = {
         const response = await api.get('/api/dashboard')
       
         // Handle 304 Not Modified
-        if (response.notModified) {
+        // Custom property added in axios response interceptor
+        if ((response as unknown as { notModified?: boolean }).notModified) {
           throw new Error('Not modified')
         }
       
@@ -696,7 +781,7 @@ export const networkApi = {
     try {
       const response = await api.get('/api/config/public')
       // Handle 304 Not Modified - force fresh fetch
-      if (response.notModified || !response.data) {
+      if ((response as unknown as { notModified?: boolean }).notModified || !response.data) {
         console.warn('[API] Config response was 304 or empty, forcing fresh fetch...')
         // Clear ETag cache and force fresh fetch
         const requestKey = 'GET:/api/config/public'
