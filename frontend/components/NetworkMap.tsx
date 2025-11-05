@@ -262,7 +262,13 @@ export default function NetworkMap({ status, config, onRefresh, isRefreshing = f
     const endpoints = Array.isArray(link.endpoints) ? link.endpoints.slice(0, 2) : []
 
     while (endpoints.length < 2) {
-      endpoints.push({ areaId: null, deviceId: null, interface: null, interfaceType: null, label: null })
+      endpoints.push({ 
+        areaId: null, 
+        deviceId: null, 
+        interface: undefined, 
+        interfaceType: undefined, 
+        label: undefined 
+      })
     }
 
     return endpoints.map((endpoint, index) => {
