@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from 'react'
 import { useWebSocket } from '@/lib/useWebSocket'
-import { type NetworkStatus, type Config, type DeviceStatus, type NetworkLinkStatus, type TopologySettings, type AreaStatus } from '@/lib/api'
+import { type NetworkStatus, type Config, type DeviceStatus, type NetworkLinkStatus, type NetworkLinkStatusEndpoint, type TopologySettings, type AreaStatus } from '@/lib/api'
 import { formatLatency } from '@/lib/utils'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -965,7 +965,7 @@ function AreaTopology({ area, config, linkStatusMap, topologySettings }: AreaTop
   const nodeMap = new Map<string, PathNode>()
   const edges: PathEdge[] = []
 
-  const ensureNode = (endpoint: NetworkLinkStatus['endpoints'][number] | undefined, fallbackLabel: string): PathNode => {
+  const ensureNode = (endpoint: NetworkLinkStatusEndpoint | undefined, fallbackLabel: string): PathNode => {
     const areaId = endpoint?.areaId ?? null
     const deviceId = endpoint?.deviceId ?? null
     const areaName = getAreaName(areaId, endpoint?.areaName ?? null)
