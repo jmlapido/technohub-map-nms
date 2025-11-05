@@ -502,8 +502,8 @@ export default function NetworkMap({ status, config, onRefresh, isRefreshing = f
     <div className="relative h-full w-full flex flex-col">
       <div className="flex-1 relative">
         <MapContainer
-          center={[14.5995, 120.9842]}
-          zoom={6}
+          center={[6.518100947173764, 124.65440814941078]}
+          zoom={12}
           style={{ height: '100%', width: '100%', zIndex: 1 }}
           ref={mapRef}
           className="z-0"
