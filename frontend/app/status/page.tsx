@@ -379,7 +379,7 @@ export default function StatusPage() {
         // Search filter
         if (searchQuery) {
           const query = searchQuery.toLowerCase()
-          const areaNameMatch = area.areaInfo.name.toLowerCase().includes(query)
+          const areaNameMatch = area.areaInfo?.name.toLowerCase().includes(query) || false
           const deviceMatch = area.devices.some(device => {
             const deviceInfo = config.devices.find(d => d.id === device.deviceId)
             return deviceInfo?.name.toLowerCase().includes(query) || 
