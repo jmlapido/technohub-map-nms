@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { connectWebSocket, disconnectWebSocket, getWebSocketClient, type StatusUpdate, type DeviceUpdate } from './websocket';
+import { getWebSocketClient, type StatusUpdate, type DeviceUpdate } from './websocket';
 import { networkApi, type NetworkStatus, type Config } from './api';
 
 interface UseWebSocketOptions {
@@ -40,7 +40,6 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRes
   const [usePolling, setUsePolling] = useState(false);
 
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const isInitialMountRef = useRef(true);
 
   // Load initial data
   const loadData = useCallback(async () => {

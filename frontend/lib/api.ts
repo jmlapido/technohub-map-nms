@@ -722,9 +722,10 @@ export const networkApi = {
         linksCount: data?.links?.length || 0
       })
       return normalizePartialConfig(data)
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Handle 304 errors specifically
-      if (error.needsFreshFetch || error.response?.status === 304) {
+      const err = error as { needsFreshFetch?: boolean; response?: { status?: number } }
+      if (err.needsFreshFetch || err.response?.status === 304) {
         console.warn('[API] Got 304, forcing fresh fetch without cache headers...')
         // Clear ETag cache to prevent infinite loop
         const requestKey = 'GET:/api/config/public'

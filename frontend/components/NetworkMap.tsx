@@ -9,7 +9,7 @@ import { formatLatency } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Activity, Wifi, WifiOff, AlertTriangle, X, Home, ShoppingBag, GraduationCap, Router, Radio, Satellite, Map as MapIcon, ChevronDown, ChevronUp, Network, ChevronRight } from 'lucide-react'
+import { Activity, Wifi, WifiOff, AlertTriangle, X, Home, ShoppingBag, GraduationCap, Router, Radio, Satellite, Map as MapIcon, ChevronDown, ChevronUp, Network } from 'lucide-react'
 
 // Fix for default marker icons in React-Leaflet
 delete (L.Icon.Default.prototype as Record<string, unknown>)._getIconUrl
@@ -400,34 +400,11 @@ export default function NetworkMap({ status, config, onRefresh, isRefreshing = f
       .filter((data): data is ResolvedLinkData => data !== null)
   }, [config.links, getResolvedLinkData])
 
-  interface AreaConnection {
-    link: ResolvedLinkData
-    remote: ResolvedLinkEndpoint
-  }
-
   interface DeviceConnection {
     link: ResolvedLinkData
     remote: ResolvedLinkEndpoint
     localEndpoint: ResolvedLinkEndpoint
   }
-
-  const areaConnections = useMemo(() => {
-    if (!selectedArea) return [] as AreaConnection[]
-
-    return resolvedLinks
-      .map(link => {
-        const localIndex = link.endpoints.findIndex(endpoint => endpoint.areaId === selectedArea.areaId)
-        if (localIndex === -1) return null
-        const remoteIndex = localIndex === 0 ? 1 : 0
-        const remoteEndpoint = link.endpoints[remoteIndex]
-
-        return {
-          link,
-          remote: remoteEndpoint
-        } as AreaConnection
-      })
-      .filter((value): value is AreaConnection => value !== null)
-  }, [resolvedLinks, selectedArea])
 
   const deviceConnections = useMemo(() => {
     if (!selectedDeviceId) return [] as DeviceConnection[]

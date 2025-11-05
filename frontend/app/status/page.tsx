@@ -208,18 +208,20 @@ function deriveAreaStatusFromDevices(devices: DeviceStatus[]): AreaStatus['statu
 }
 
 export default function StatusPage() {
-  const { status, config: fullConfig, loading, isConnected } = useWebSocket({
+  const { status, config: fullConfig, loading } = useWebSocket({
     fallbackPollInterval: 15000, // 15 seconds fallback polling
     // Note: onStatusUpdate callback removed to prevent spam
     // WebSocket updates are silent and real-time by design
   })
   
-  const config = fullConfig ? {
-    areas: fullConfig.areas,
-    links: fullConfig.links,
-    devices: fullConfig.devices,
-    settings: fullConfig.settings
-  } : null
+  const config = useMemo(() => {
+    return fullConfig ? {
+      areas: fullConfig.areas,
+      links: fullConfig.links,
+      devices: fullConfig.devices,
+      settings: fullConfig.settings
+    } : null
+  }, [fullConfig])
   
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'up' | 'down' | 'degraded'>('all')

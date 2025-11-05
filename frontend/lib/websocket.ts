@@ -40,7 +40,7 @@ class WebSocketClient {
   private maxReconnectAttempts = 10;
   private reconnectDelay = 1000;
   private isConnected = false;
-  private listeners: Map<string, Set<(data: any) => void>> = new Map();
+  private listeners: Map<string, Set<(data: unknown) => void>> = new Map();
 
   constructor() {
     this.url = getWebSocketUrl();
@@ -115,7 +115,7 @@ class WebSocketClient {
     });
 
     // Handle ping/pong for connection health
-    this.socket.on('pong', (data) => {
+    this.socket.on('pong', () => {
       // Acknowledge pong
     });
   }
@@ -130,7 +130,7 @@ class WebSocketClient {
     }
   }
 
-  on(event: string, callback: (data: any) => void): () => void {
+  on(event: string, callback: (data: unknown) => void): () => void {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, new Set());
     }
@@ -148,7 +148,7 @@ class WebSocketClient {
     };
   }
 
-  off(event: string, callback?: (data: any) => void): void {
+  off(event: string, callback?: (data: unknown) => void): void {
     if (!callback) {
       // Remove all listeners for this event
       this.listeners.delete(event);
@@ -164,7 +164,7 @@ class WebSocketClient {
     }
   }
 
-  private emit(event: string, data: any): void {
+  private emit(event: string, data: unknown): void {
     const callbacks = this.listeners.get(event);
     if (callbacks) {
       callbacks.forEach(callback => {
@@ -228,8 +228,8 @@ export function disconnectWebSocket(): void {
 // Export types
 export interface StatusUpdate {
   data: {
-    areas: any[];
-    links: any[];
+    areas: unknown[];
+    links: unknown[];
   };
   timestamp: string;
 }
@@ -248,12 +248,12 @@ export interface DeviceUpdate {
 
 export interface AreaUpdate {
   areaId: string;
-  status: any;
+  status: unknown;
   timestamp: string;
 }
 
 export interface Alert {
-  alert: any;
+  alert: unknown;
   timestamp: string;
 }
 

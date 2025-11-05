@@ -3,7 +3,6 @@
 import { useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useWebSocket } from '@/lib/useWebSocket'
-import { type NetworkStatus, type Config } from '@/lib/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Home as HomeIcon, ShoppingBag, GraduationCap, Radio, Activity } from 'lucide-react'
 
