@@ -1604,7 +1604,7 @@ function AreaModal({ area, onSave, onClose }: { area: Area | null, onSave: (area
 function DeviceModal({ device, areas, onSave, onClose }: { device: Device | null, areas: Area[], onSave: (device: Device) => void, onClose: () => void }) {
   const [formData, setFormData] = useState<Device>(device || {
     id: '',
-    areaId: device?.areaId || areas[0]?.id || '',
+    areaId: areas[0]?.id || '',
     name: '',
     type: 'router',
     ip: '',
