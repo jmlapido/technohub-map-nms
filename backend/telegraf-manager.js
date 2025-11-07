@@ -291,10 +291,6 @@ ${snmpInputs}
   ## Timeout for HTTP requests
   timeout = "5s"
   
-  ## HTTP headers
-  [outputs.http.headers]
-    Content-Type = "application/json"
-  
   ## Only send ping metrics through this output
   namepass = ["ping"]
 
@@ -312,10 +308,6 @@ ${snmpDevices.length > 0 ? `
   
   ## Timeout for HTTP requests
   timeout = "5s"
-  
-  ## HTTP headers
-  [outputs.http.headers]
-    Content-Type = "application/json"
   
   ## Only send SNMP metrics through this output
   namepass = ["interface", "snmp", "ubiquiti_wireless"]

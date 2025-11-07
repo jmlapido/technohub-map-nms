@@ -100,11 +100,22 @@ sudo apt install -y redis-server
 # Configure Redis
 sudo nano /etc/redis/redis.conf
 
-# Change these settings:
-# supervised systemd
-# bind 127.0.0.1
-# maxmemory 256mb
-# maxmemory-policy allkeys-lru
+# In the Redis config file, find and modify these settings:
+# (Remove any # at the start of these lines to uncomment them)
+#
+# 1. Change: # supervised no
+#    To:     supervised systemd
+#
+# 2. Ensure this line is uncommented (no # at the start):
+#    bind 127.0.0.1
+#
+# 3. Add or uncomment (remove # if present):
+#    maxmemory 256mb
+#
+# 4. Add or uncomment (remove # if present):
+#    maxmemory-policy allkeys-lru
+#
+# Save and exit: Ctrl+X, then Y, then Enter
 
 # Restart Redis
 sudo systemctl enable redis-server
@@ -132,6 +143,10 @@ git pull origin main
 ### Step 4: Install Application Dependencies
 
 ```bash
+# Install root dependencies (concurrently, etc.)
+cd /opt/map-ping
+npm install
+
 # Install backend dependencies
 cd /opt/map-ping/backend
 npm install
