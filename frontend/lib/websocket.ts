@@ -10,7 +10,9 @@ import { io, Socket } from 'socket.io-client';
 function getWebSocketUrl(): string {
   // If explicitly set via environment variable, use that
   if (process.env.NEXT_PUBLIC_API_URL) {
-    return process.env.NEXT_PUBLIC_API_URL;
+    const url = process.env.NEXT_PUBLIC_API_URL;
+    // Convert http/https to ws/wss
+    return url.replace(/^https?:/, url.startsWith('https') ? 'wss:' : 'ws:');
   }
 
   // If running in browser, detect from current location
@@ -20,9 +22,14 @@ function getWebSocketUrl(): string {
     // Convert http/https to ws/wss
     const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
     
-    // If accessing via domain (Cloudflare), use same domain
-    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+    // If accessing via domain (Cloudflare), use same domain (no port needed)
+    if (hostname !== 'localhost' && hostname !== '127.0.0.1' && !hostname.match(/^\d+\.\d+\.\d+\.\d+$/)) {
       return `${wsProtocol}//${hostname}`;
+    }
+    
+    // If accessing via IP address, use the same IP with backend port
+    if (hostname.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+      return `ws://${hostname}:5000`;
     }
     
     // Default to localhost

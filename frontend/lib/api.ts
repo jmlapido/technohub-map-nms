@@ -18,15 +18,19 @@ function getApiBaseUrl(): string {
 
   // If running in browser, detect from current location
   if (typeof window !== 'undefined') {
-    const { protocol, hostname } = window.location
+    const { protocol, hostname, port } = window.location
     
-    // If accessing via domain (Cloudflare), use same domain
-    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+    // If accessing via domain (Cloudflare), use same domain (no port needed)
+    if (hostname !== 'localhost' && hostname !== '127.0.0.1' && !hostname.match(/^\d+\.\d+\.\d+\.\d+$/)) {
       return `${protocol}//${hostname}`
     }
     
-    // If accessing via local IP, use the same IP
-    // This will be handled by the browser automatically
+    // If accessing via IP address, use the same IP with backend port
+    if (hostname.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+      return `http://${hostname}:5000`
+    }
+    
+    // If accessing via localhost, use localhost with backend port
     return 'http://localhost:5000'
   }
 

@@ -1074,9 +1074,11 @@ app.post('/api/snmp/flapping-config', (req, res) => {
   }
 });
 
-server.listen(PORT, async () => {
+server.listen(PORT, '0.0.0.0', async () => {
   console.log(`Backend server running on port ${PORT}`);
   console.log(`API available at http://localhost:${PORT}/api`);
+  console.log(`API available at http://0.0.0.0:${PORT}/api (all interfaces)`);
   console.log(`WebSocket server available at ws://localhost:${PORT}`);
+  console.log(`WebSocket server available at ws://0.0.0.0:${PORT} (all interfaces)`);
 });
 
