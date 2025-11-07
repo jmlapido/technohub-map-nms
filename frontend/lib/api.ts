@@ -654,6 +654,10 @@ export interface Device {
     latency: { good: number, degraded: number }
     packetLoss: { good: number, degraded: number }
   }
+  // V3: SNMP configuration
+  snmpEnabled?: boolean
+  snmpCommunity?: string
+  snmpVersion?: 1 | 2 | 3
 }
 
 export interface TopologySettings {

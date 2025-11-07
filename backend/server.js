@@ -11,12 +11,22 @@ const multer = require('multer');
 const extract = require('extract-zip');
 const compression = require('compression');
 
+// V3: Telegraf and SNMP support
+const { updateTelegrafConfig, checkTelegrafStatus, getTelegrafLogs } = require('./telegraf-manager');
+const { router: telegrafRoutes, setConfig: setTelegrafConfig } = require('./routes/telegraf-routes');
+const { getPubSubManager } = require('./pubsub/PubSubManager');
+const { getInterfaceStatus, getFlappingReport } = require('./snmp/snmp-storage');
+const { getStats: getFlappingStats, getConfig: getFlappingConfig, updateConfig: updateFlappingConfig } = require('./snmp/FlappingDetector');
+
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.BACKEND_PORT || 5000;
 
 // Initialize WebSocket server
 const statusEmitter = new StatusEmitter(server);
+
+// V3: Initialize Redis pub/sub for real-time synchronization
+let pubSubManager = null;
 
 // Enable compression for better performance over Cloudflare
 app.use(compression({
@@ -38,6 +48,9 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: '10mb' })); // Increase limit for imports
+
+// V3: Mount Telegraf routes
+app.use('/api/telegraf', telegrafRoutes);
 
 // Add ETag and caching middleware
 app.use((req, res, next) => {
@@ -389,18 +402,76 @@ const configPath = path.join(__dirname, 'data', 'config.json');
 
 (async () => {
   try {
+    console.log('[Server] Initializing Map-Ping V3...');
+    
+    // Initialize database
     await initDatabase();
-    console.log('[Server] Database initialization complete');
+    console.log('[Server] ✓ Database initialization complete');
     
     // Load configuration
     config = loadConfig(configPath);
+    console.log(`[Server] ✓ Configuration loaded: ${config.devices.length} devices`);
     
-    // Start monitoring with WebSocket emitter
-    setTimeout(() => {
-      startMonitoring(config, statusEmitter);
-    }, 2000);
+    // V3: Initialize Redis pub/sub
+    try {
+      pubSubManager = getPubSubManager();
+      await pubSubManager.initialize();
+      console.log('[Server] ✓ Redis pub/sub initialized');
+      
+      // Connect WebSocket to pub/sub channels
+      pubSubManager.on('device:update', (data) => {
+        if (statusEmitter) {
+          statusEmitter.emitDeviceUpdate(data.deviceId, data);
+        }
+      });
+      
+      pubSubManager.on('interface:update', (data) => {
+        if (statusEmitter) {
+          statusEmitter.io.emit('interface:update', data);
+        }
+      });
+      
+      pubSubManager.on('alert:flapping', (data) => {
+        if (statusEmitter) {
+          statusEmitter.emitAlert(data);
+        }
+      });
+      
+      console.log('[Server] ✓ WebSocket connected to pub/sub');
+      
+    } catch (error) {
+      console.warn('[Server] ⚠️  Redis pub/sub initialization failed (will work without it):', error.message);
+      pubSubManager = null;
+    }
+    
+    // V3: Check and configure Telegraf
+    const telegrafStatus = await checkTelegrafStatus();
+    
+    if (telegrafStatus.installed) {
+      console.log('[Server] ✓ Telegraf detected:', telegrafStatus.version);
+      
+      // Generate initial Telegraf configuration
+      const telegrafResult = await updateTelegrafConfig(config);
+      
+      if (telegrafResult.success) {
+        console.log('[Server] ✓ Telegraf configuration generated');
+        setTelegrafConfig(config); // Make config available to routes
+      } else {
+        console.warn('[Server] ⚠️  Failed to generate Telegraf config:', telegrafResult.error);
+      }
+    } else {
+      console.log('[Server] ℹ️  Telegraf not installed, using built-in monitor');
+      
+      // Start built-in monitoring
+      setTimeout(() => {
+        startMonitoring(config, statusEmitter);
+      }, 2000);
+    }
+    
+    console.log('[Server] ✅ Initialization complete - Map-Ping V3 ready!');
+    
   } catch (error) {
-    console.error('[Server] Failed to initialize:', error);
+    console.error('[Server] ❌ Failed to initialize:', error);
     process.exit(1);
   }
 })();
@@ -614,8 +685,31 @@ app.post('/api/config', (req, res) => {
     // Clear cache before restarting monitoring
     clearStatusCache();
     
-    // Restart monitoring with new config and WebSocket emitter
-    restartMonitoring(config, statusEmitter);
+    // V3: Check if Telegraf is available
+    const telegrafStatus = await checkTelegrafStatus();
+    let telegrafUpdated = false;
+    
+    if (telegrafStatus.installed) {
+      console.log('[Config] Telegraf detected, updating configuration...');
+      
+      // Update Telegraf configuration with new device list
+      const telegrafResult = await updateTelegrafConfig(normalizedConfig);
+      
+      if (telegrafResult.success) {
+        console.log('[Config] Telegraf configuration updated successfully');
+        telegrafUpdated = true;
+        
+        // Update config in Telegraf routes
+        setTelegrafConfig(normalizedConfig);
+      } else {
+        console.warn('[Config] Failed to update Telegraf:', telegrafResult.error);
+        // Don't fail the request, just log warning
+      }
+    } else {
+      console.log('[Config] Telegraf not installed, using built-in monitor');
+      // Fall back to built-in monitor
+      restartMonitoring(config, statusEmitter);
+    }
     
     res.json({ 
       success: true, 
@@ -624,6 +718,8 @@ app.post('/api/config', (req, res) => {
       areasCount: normalizedConfig.areas.length,
       linksCount: normalizedConfig.links.length,
       invalidLinksRemoved: report?.invalidLinks?.length || 0,
+      telegrafUpdated,
+      monitoringMode: telegrafStatus.installed ? 'telegraf' : 'builtin',
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -904,7 +1000,81 @@ app.get('/api/system/stats', async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+// V3: Monitoring status endpoint
+app.get('/api/monitoring/status', async (req, res) => {
+  try {
+    const telegrafStatus = await checkTelegrafStatus();
+    const flappingStats = getFlappingStats();
+    
+    const status = {
+      mode: telegrafStatus.installed ? 'telegraf' : 'builtin',
+      telegraf: telegrafStatus,
+      devices: config?.devices?.length || 0,
+      snmpDevices: config?.devices?.filter(d => d.snmpEnabled)?.length || 0,
+      flappingDetection: {
+        enabled: true,
+        config: getFlappingConfig(),
+        stats: flappingStats
+      },
+      pubsub: pubSubManager ? pubSubManager.getStatus() : null
+    };
+    
+    res.json(status);
+  } catch (error) {
+    console.error('Error getting monitoring status:', error);
+    res.status(500).json({ error: 'Failed to get monitoring status', details: error.message });
+  }
+});
+
+// V3: Get interface status for a device
+app.get('/api/snmp/interfaces/:deviceId', async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const interfaces = await getInterfaceStatus(deviceId);
+    res.json(interfaces);
+  } catch (error) {
+    console.error('Error getting interface status:', error);
+    res.status(500).json({ error: 'Failed to get interface status', details: error.message });
+  }
+});
+
+// V3: Get flapping report
+app.get('/api/snmp/flapping-report', async (req, res) => {
+  try {
+    const hours = parseInt(req.query.hours) || 24;
+    const report = await getFlappingReport(hours);
+    res.json(report);
+  } catch (error) {
+    console.error('Error getting flapping report:', error);
+    res.status(500).json({ error: 'Failed to get flapping report', details: error.message });
+  }
+});
+
+// V3: Get Telegraf logs
+app.get('/api/monitoring/telegraf/logs', async (req, res) => {
+  try {
+    const lines = parseInt(req.query.lines) || 50;
+    const logs = await getTelegrafLogs(lines);
+    res.json({ logs });
+  } catch (error) {
+    console.error('Error getting Telegraf logs:', error);
+    res.status(500).json({ error: 'Failed to get logs', details: error.message });
+  }
+});
+
+// V3: Update flapping detection configuration
+app.post('/api/snmp/flapping-config', (req, res) => {
+  try {
+    const newConfig = req.body;
+    updateFlappingConfig(newConfig);
+    res.json({ success: true, config: getFlappingConfig() });
+  } catch (error) {
+    console.error('Error updating flapping config:', error);
+    res.status(500).json({ error: 'Failed to update config', details: error.message });
+  }
+});
+
+server.listen(PORT, async () => {
   console.log(`Backend server running on port ${PORT}`);
   console.log(`API available at http://localhost:${PORT}/api`);
   console.log(`WebSocket server available at ws://localhost:${PORT}`);

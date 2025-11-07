@@ -130,7 +130,7 @@ sudo npm install -g pm2
 
 ```bash
 # Clone from GitHub
-git clone https://github.com/jmlapido/technohub-map-nms.git
+git clone https://github.com/jmlapido/technohub-map-nms.git map-ping
 cd technohub-map-nms
 
 # Or navigate to transferred directory

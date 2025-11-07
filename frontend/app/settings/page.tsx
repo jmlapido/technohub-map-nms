@@ -1608,7 +1608,10 @@ function DeviceModal({ device, areas, onSave, onClose }: { device: Device | null
     name: '',
     type: 'router',
     ip: '',
-    criticality: 'normal'
+    criticality: 'normal',
+    snmpEnabled: false,
+    snmpCommunity: 'public',
+    snmpVersion: 2
   })
 
   // Update form data when device prop changes (important for area-specific device creation)
@@ -1620,7 +1623,10 @@ function DeviceModal({ device, areas, onSave, onClose }: { device: Device | null
         name: device.name || '',
         type: device.type || 'router',
         ip: device.ip || '',
-        criticality: device.criticality || 'normal'
+        criticality: device.criticality || 'normal',
+        snmpEnabled: device.snmpEnabled || false,
+        snmpCommunity: device.snmpCommunity || 'public',
+        snmpVersion: device.snmpVersion || 2
       })
     } else {
       // Reset to defaults when creating new device
@@ -1630,7 +1636,10 @@ function DeviceModal({ device, areas, onSave, onClose }: { device: Device | null
         name: '',
         type: 'router',
         ip: '',
-        criticality: 'normal'
+        criticality: 'normal',
+        snmpEnabled: false,
+        snmpCommunity: 'public',
+        snmpVersion: 2
       })
     }
   }, [device, areas])
@@ -1724,6 +1733,60 @@ function DeviceModal({ device, areas, onSave, onClose }: { device: Device | null
               <p className="text-xs text-muted-foreground mt-1">
                 {criticalityOptions.find(opt => opt.value === (formData.criticality || 'normal'))?.description}
               </p>
+            </div>
+
+            {/* V3: SNMP Configuration */}
+            <div className="border-t pt-4 space-y-4">
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="device-snmp-enabled"
+                  className="h-4 w-4 rounded border-gray-300"
+                  checked={formData.snmpEnabled || false}
+                  onChange={(e) => setFormData({ ...formData, snmpEnabled: e.target.checked })}
+                />
+                <Label htmlFor="device-snmp-enabled" className="cursor-pointer">
+                  Enable SNMP Monitoring
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Enable SNMP to monitor interface status, link speed, and detect flapping connections (LiteBeam, NanoBeam, etc.)
+              </p>
+
+              {formData.snmpEnabled && (
+                <>
+                  <div>
+                    <Label htmlFor="device-snmp-community">SNMP Community String *</Label>
+                    <Input
+                      id="device-snmp-community"
+                      value={formData.snmpCommunity || ''}
+                      onChange={(e) => setFormData({ ...formData, snmpCommunity: e.target.value })}
+                      placeholder="e.g., public"
+                      required={formData.snmpEnabled}
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Community string configured on the device (default: &quot;public&quot;)
+                    </p>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="device-snmp-version">SNMP Version *</Label>
+                    <select
+                      id="device-snmp-version"
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      value={formData.snmpVersion || 2}
+                      onChange={(e) => setFormData({ ...formData, snmpVersion: parseInt(e.target.value) as 1 | 2 | 3 })}
+                    >
+                      <option value={1}>v1</option>
+                      <option value={2}>v2c (Recommended)</option>
+                      <option value={3}>v3</option>
+                    </select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Most Ubiquiti devices use SNMP v2c
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="flex gap-2 justify-end pt-4">

@@ -959,6 +959,7 @@ module.exports = {
   getDatabaseStats,
   getBatchWriter,
   getRedisManagerInstance,
+  getDatabase,  // Export for migrations and SNMP modules
   CRITICALITY_INTERVALS
 };
 
