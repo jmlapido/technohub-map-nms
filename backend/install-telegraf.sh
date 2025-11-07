@@ -42,45 +42,68 @@ case $OS in
     ubuntu|debian)
         echo -e "${YELLOW}📦 Installing for Ubuntu/Debian...${NC}\n"
         
-        # Update package list
-        echo "→ Updating package list..."
-        apt-get update -qq
+        # Clean up any existing InfluxData repository configuration first
+        echo "→ Cleaning up any existing InfluxData repository configuration..."
+        rm -f /etc/apt/sources.list.d/influxdata.list
+        rm -f /etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg
+        rm -f /etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg.asc
+        rm -f /tmp/influxdata-archive_compat.key
         
-        # Install prerequisites
+        # Install prerequisites first (without updating, to avoid errors)
         echo "→ Installing prerequisites..."
-        apt-get install -y -qq wget gnupg2 curl apt-transport-https software-properties-common
+        apt-get install -y -qq wget gnupg2 curl apt-transport-https software-properties-common ca-certificates 2>/dev/null || \
+        apt-get install -y wget gnupg2 curl apt-transport-https software-properties-common ca-certificates
         
         # Add InfluxData repository
         echo "→ Adding InfluxData repository..."
         
         # Download and import GPG key using multiple methods for reliability
         KEY_FILE="/tmp/influxdata-archive_compat.key"
+        KEY_IMPORTED=false
         
-        # Method 1: Try downloading and importing directly
+        # Method 1: Try downloading and importing directly with curl
+        echo "→ Downloading GPG key..."
         if curl -fsSL https://repos.influxdata.com/influxdata-archive_compat.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg 2>/dev/null; then
-            echo "✓ GPG key imported successfully"
+            echo "✓ GPG key imported successfully (method 1)"
+            KEY_IMPORTED=true
         else
             # Method 2: Try using wget and import
             echo "→ Trying alternative key import method..."
-            if wget -q -O "$KEY_FILE" https://repos.influxdata.com/influxdata-archive_compat.key; then
-                cat "$KEY_FILE" | gpg --dearmor | tee /etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg > /dev/null
-                rm -f "$KEY_FILE"
-                echo "✓ GPG key imported successfully"
-            else
-                # Method 3: Use keyserver as fallback
-                echo "→ Trying GPG keyserver method..."
-                gpg --keyserver keyserver.ubuntu.com --recv-keys D8FF8E1F7DF8B07E 2>/dev/null || \
-                gpg --keyserver pgp.mit.edu --recv-keys D8FF8E1F7DF8B07E 2>/dev/null || true
-                gpg --export D8FF8E1F7DF8B07E | gpg --dearmor | tee /etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg > /dev/null
-                echo "✓ GPG key imported via keyserver"
+            if wget -q -O "$KEY_FILE" https://repos.influxdata.com/influxdata-archive_compat.key 2>/dev/null; then
+                if cat "$KEY_FILE" | gpg --dearmor | tee /etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg > /dev/null 2>&1; then
+                    rm -f "$KEY_FILE"
+                    echo "✓ GPG key imported successfully (method 2)"
+                    KEY_IMPORTED=true
+                else
+                    rm -f "$KEY_FILE"
+                fi
             fi
+        fi
+        
+        # Method 3: Use keyserver as fallback if previous methods failed
+        if [ "$KEY_IMPORTED" = false ]; then
+            echo "→ Trying GPG keyserver method..."
+            if gpg --keyserver keyserver.ubuntu.com --recv-keys D8FF8E1F7DF8B07E 2>/dev/null || \
+               gpg --keyserver pgp.mit.edu --recv-keys D8FF8E1F7DF8B07E 2>/dev/null || \
+               gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys D8FF8E1F7DF8B07E 2>/dev/null; then
+                if gpg --export D8FF8E1F7DF8B07E 2>/dev/null | gpg --dearmor | tee /etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg > /dev/null 2>&1; then
+                    echo "✓ GPG key imported via keyserver (method 3)"
+                    KEY_IMPORTED=true
+                fi
+            fi
+        fi
+        
+        if [ "$KEY_IMPORTED" = false ]; then
+            echo -e "${RED}❌ Failed to import GPG key. Please check your internet connection.${NC}"
+            exit 1
         fi
         
         # Add repository
         echo 'deb [signed-by=/etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg] https://repos.influxdata.com/debian stable main' | \
-        tee /etc/apt/sources.list.d/influxdata.list
+        tee /etc/apt/sources.list.d/influxdata.list > /dev/null
         
-        # Update package list again
+        # Update package list
+        echo "→ Updating package list..."
         apt-get update -qq
         
         # Install Telegraf
