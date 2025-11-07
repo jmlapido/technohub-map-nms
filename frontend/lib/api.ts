@@ -38,7 +38,13 @@ function getApiBaseUrl(): string {
   return 'http://localhost:5000'
 }
 
-const API_BASE = getApiBaseUrl()
+// Get API base URL dynamically (computed at runtime, not module load time)
+function getApiBaseUrlDynamic(): string {
+  return getApiBaseUrl()
+}
+
+// For SSR compatibility, we'll set a default but override it in the browser
+let API_BASE = 'http://localhost:5000'
 
 // Authentication token management
 let authToken: string | null = null
@@ -124,6 +130,12 @@ if (typeof window !== 'undefined') {
   }
 }
 
+// Initialize API base URL in browser
+if (typeof window !== 'undefined') {
+  API_BASE = getApiBaseUrlDynamic()
+  console.log('[API] Base URL:', API_BASE)
+}
+
 export const api = axios.create({
   baseURL: API_BASE,
   timeout: 15000, // Increased timeout for Cloudflare
@@ -132,6 +144,18 @@ export const api = axios.create({
     // Remove unsafe Accept-Encoding header in browser
   }
 })
+
+// Update baseURL dynamically in browser (for IP address detection)
+if (typeof window !== 'undefined') {
+  // Use request interceptor to set baseURL dynamically based on current location
+  api.interceptors.request.use((config) => {
+    const dynamicBaseUrl = getApiBaseUrlDynamic()
+    if (config.baseURL !== dynamicBaseUrl) {
+      config.baseURL = dynamicBaseUrl
+    }
+    return config
+  })
+}
 
 // Enhanced request interceptor with ETag support
 api.interceptors.request.use((config) => {

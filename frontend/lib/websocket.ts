@@ -42,7 +42,6 @@ function getWebSocketUrl(): string {
 
 class WebSocketClient {
   private socket: Socket | null = null;
-  private url: string;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
   private reconnectDelay = 1000;
@@ -50,7 +49,7 @@ class WebSocketClient {
   private listeners: Map<string, Set<(data: unknown) => void>> = new Map();
 
   constructor() {
-    this.url = getWebSocketUrl();
+    // URL will be computed dynamically when connecting
   }
 
   connect(): void {
@@ -59,9 +58,11 @@ class WebSocketClient {
       return;
     }
 
-    console.log(`[WebSocket] Connecting to ${this.url}...`);
+    // Compute URL dynamically based on current browser location
+    const url = getWebSocketUrl();
+    console.log(`[WebSocket] Connecting to ${url}...`);
 
-    this.socket = io(this.url, {
+    this.socket = io(url, {
       transports: ['websocket', 'polling'], // Fallback to polling
       reconnection: true,
       reconnectionDelay: this.reconnectDelay,
