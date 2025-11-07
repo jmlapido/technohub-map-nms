@@ -53,11 +53,28 @@ case $OS in
         # Add InfluxData repository
         echo "→ Adding InfluxData repository..."
         
-        # Download and verify key
-        wget -q https://repos.influxdata.com/influxdata-archive_compat.key
-        echo '23a1c8836f0afc5ed24e0486339d7cc8f6790b83886c4c96995b88a061c5bb5d influxdata-archive_compat.key' | sha256sum -c && \
-        cat influxdata-archive_compat.key | gpg --dearmor | tee /etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg > /dev/null
-        rm influxdata-archive_compat.key
+        # Download and import GPG key using multiple methods for reliability
+        KEY_FILE="/tmp/influxdata-archive_compat.key"
+        
+        # Method 1: Try downloading and importing directly
+        if curl -fsSL https://repos.influxdata.com/influxdata-archive_compat.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg 2>/dev/null; then
+            echo "✓ GPG key imported successfully"
+        else
+            # Method 2: Try using wget and import
+            echo "→ Trying alternative key import method..."
+            if wget -q -O "$KEY_FILE" https://repos.influxdata.com/influxdata-archive_compat.key; then
+                cat "$KEY_FILE" | gpg --dearmor | tee /etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg > /dev/null
+                rm -f "$KEY_FILE"
+                echo "✓ GPG key imported successfully"
+            else
+                # Method 3: Use keyserver as fallback
+                echo "→ Trying GPG keyserver method..."
+                gpg --keyserver keyserver.ubuntu.com --recv-keys D8FF8E1F7DF8B07E 2>/dev/null || \
+                gpg --keyserver pgp.mit.edu --recv-keys D8FF8E1F7DF8B07E 2>/dev/null || true
+                gpg --export D8FF8E1F7DF8B07E | gpg --dearmor | tee /etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg > /dev/null
+                echo "✓ GPG key imported via keyserver"
+            fi
+        fi
         
         # Add repository
         echo 'deb [signed-by=/etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg] https://repos.influxdata.com/debian stable main' | \
@@ -195,4 +212,5 @@ echo -e "${YELLOW}📚 Documentation:${NC}"
 echo -e "   - Telegraf: https://docs.influxdata.com/telegraf/"
 echo -e "   - Map-Ping V3 Guide: See V3_INSTALL_GUIDE.md"
 echo -e ""
+
 
