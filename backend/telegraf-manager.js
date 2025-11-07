@@ -398,20 +398,24 @@ async function validateTelegrafConfig(configPath) {
     console.log('[Telegraf] Validating configuration...');
     
     // Run telegraf config test
-    const { stdout, stderr } = await execAsync(
+    // Note: --test outputs metrics to stdout on success, which is normal and expected
+    // execAsync only throws if exit code is non-zero, so if we get here without throwing,
+    // the config is valid
+    await execAsync(
       `telegraf --config ${configPath} --test --quiet`,
       { timeout: 10000 }
     );
     
+    // If we get here, the config is valid (exit code was 0)
+    // The --quiet flag suppresses the metrics output, but if there were errors,
+    // the command would have thrown
     console.log('[Telegraf] Configuration validation passed');
     return true;
     
   } catch (error) {
+    // execAsync throws if exit code is non-zero, meaning config is invalid
     const errorOutput = error.stderr || error.stdout || error.message;
     console.error('[Telegraf] Configuration validation failed:', errorOutput);
-    if (error.stdout && error.stdout !== errorOutput) {
-      console.error('[Telegraf] Additional output:', error.stdout);
-    }
     return false;
   }
 }
