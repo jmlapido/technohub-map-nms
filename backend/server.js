@@ -649,7 +649,7 @@ app.get('/api/config/public', (req, res) => {
   }
 });
 
-app.post('/api/config', (req, res) => {
+app.post('/api/config', async (req, res) => {
   try {
     const newConfig = req.body;
     

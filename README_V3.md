@@ -186,6 +186,41 @@ sudo telegraf --config /etc/telegraf/telegraf.conf --test
 
 ## 🐛 Troubleshooting
 
+### Telegraf Service Failing to Start
+
+If you see errors like:
+- `Referenced but unset environment variable: TELEGRAF_OPTS`
+- `no outputs found, probably invalid config file provided`
+- `telegraf.service: Failed with result 'exit-code'`
+
+**Quick Fix:**
+```bash
+# Run the automated fix script
+cd ~/map-ping
+sudo bash backend/fix-telegraf-service.sh
+```
+
+**Manual Fix:**
+```bash
+# 1. Fix the service file (remove or set TELEGRAF_OPTS)
+sudo systemctl edit telegraf
+# Add this line in the [Service] section:
+# Environment="TELEGRAF_OPTS="
+
+# 2. Ensure config has outputs (create minimal if needed)
+sudo nano /etc/telegraf/telegraf.conf
+# Add at minimum:
+# [[outputs.file]]
+#   files = ["stdout"]
+#   data_format = "influx"
+
+# 3. Reload and restart
+sudo systemctl daemon-reload
+sudo systemctl reset-failed telegraf
+sudo systemctl start telegraf
+sudo systemctl status telegraf
+```
+
 ### Telegraf Not Collecting Data
 ```bash
 # Check Telegraf status
