@@ -18,7 +18,7 @@ function getApiBaseUrl(): string {
 
   // If running in browser, detect from current location
   if (typeof window !== 'undefined') {
-    const { protocol, hostname, port } = window.location
+    const { protocol, hostname } = window.location
     
     // If accessing via domain (Cloudflare), use same domain (no port needed)
     if (hostname !== 'localhost' && hostname !== '127.0.0.1' && !hostname.match(/^\d+\.\d+\.\d+\.\d+$/)) {
