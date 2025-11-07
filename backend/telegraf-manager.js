@@ -407,7 +407,11 @@ async function validateTelegrafConfig(configPath) {
     return true;
     
   } catch (error) {
-    console.error('[Telegraf] Configuration validation failed:', error.stderr || error.message);
+    const errorOutput = error.stderr || error.stdout || error.message;
+    console.error('[Telegraf] Configuration validation failed:', errorOutput);
+    if (error.stdout && error.stdout !== errorOutput) {
+      console.error('[Telegraf] Additional output:', error.stdout);
+    }
     return false;
   }
 }
