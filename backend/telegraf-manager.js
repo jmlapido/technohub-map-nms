@@ -399,52 +399,61 @@ async function validateTelegrafConfig(configPath) {
     
     // Run telegraf config test
     // Note: --test outputs metrics to stdout on success (lines starting with '>')
+    // We redirect stderr to stdout and filter for actual errors
     // execAsync only throws if exit code is non-zero
     const { stdout, stderr } = await execAsync(
-      `telegraf --config ${configPath} --test --quiet`,
-      { timeout: 10000 }
+      `telegraf --config ${configPath} --test 2>&1`,
+      { timeout: 15000 }
     );
     
-    // Check if there are actual errors in stderr
-    if (stderr && stderr.trim().length > 0 && 
-        (stderr.includes('error') || stderr.includes('Error') || stderr.includes('E!'))) {
-      console.error('[Telegraf] Configuration validation failed:', stderr);
+    // Combine stdout and stderr for analysis
+    const output = (stdout || '') + (stderr || '');
+    
+    // Check for actual error patterns (E! indicates errors in Telegraf)
+    if (output.includes('E!') || 
+        output.toLowerCase().includes('error loading config') ||
+        output.toLowerCase().includes('error parsing')) {
+      // Extract error lines
+      const errorLines = output.split('\n').filter(line => 
+        line.includes('E!') || 
+        line.toLowerCase().includes('error')
+      );
+      console.error('[Telegraf] Configuration validation failed:', errorLines.join('\n'));
       return false;
     }
     
-    // If stdout contains metrics (starts with '>'), the config is valid
+    // If output contains metrics (lines starting with '>'), the config is valid
     // This is the normal output when --test succeeds
-    if (stdout && stdout.trim().startsWith('>')) {
+    if (output.includes('> ping') || output.includes('> snmp') || output.includes('> interface')) {
       console.log('[Telegraf] Configuration validation passed');
       return true;
     }
     
-    // If we get here with no errors, config is valid
+    // If we get here with no errors and command succeeded (didn't throw), config is valid
     console.log('[Telegraf] Configuration validation passed');
     return true;
     
   } catch (error) {
     // Check if this is actually metrics output (success) being caught as error
-    const errorOutput = error.stderr || error.stdout || error.message;
+    const errorOutput = error.stderr || error.stdout || error.message || '';
     
     // If the output contains metrics (starts with '>'), it's actually a success
-    // This can happen if execAsync treats stdout as an error in some cases
-    if (errorOutput && errorOutput.trim().startsWith('>')) {
+    if (errorOutput.includes('> ping') || errorOutput.includes('> snmp') || errorOutput.includes('> interface')) {
       console.log('[Telegraf] Configuration validation passed (metrics output detected)');
       return true;
     }
     
     // Check for actual error patterns
-    if (errorOutput && (errorOutput.includes('E!') || 
-        errorOutput.toLowerCase().includes('error') ||
-        errorOutput.includes('failed'))) {
+    if (errorOutput.includes('E!') || 
+        errorOutput.toLowerCase().includes('error loading config') ||
+        errorOutput.toLowerCase().includes('error parsing')) {
       console.error('[Telegraf] Configuration validation failed:', errorOutput);
       return false;
     }
     
-    // If no clear error pattern, assume it's valid (metrics output)
-    console.log('[Telegraf] Configuration validation passed');
-    return true;
+    // If no clear error pattern but command failed, it's an error
+    console.error('[Telegraf] Configuration validation failed:', errorOutput);
+    return false;
   }
 }
 
